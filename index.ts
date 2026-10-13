@@ -13,7 +13,7 @@
 
 import { Plugin } from "@opencode/plugin";
 import type { ContextHookEvent, Disposable, PluginContext } from "@opencode/plugin";
-import { appliesToProvider, computeBudget, readOptions } from "./src/options.js";
+import { appliesToProvider, computeBudget, effectiveWindow, readOptions } from "./src/options.js";
 import { createLogger } from "./src/logger.js";
 import { createCounter } from "./src/tokenizer/index.js";
 import { guardRequest } from "./src/guard.js";
@@ -96,7 +96,7 @@ export default Plugin.define({
       const handler = (event: ContextHookEvent) => {
         const window = state.window;
         if (!window) return; // backend window unknown — do not guess
-        logger.debug(`context hook: window ${window.context}, messages ${event.messages.length}`);
+        logger.debug(`context hook: window ${effectiveWindow(window.context, options)}, messages ${event.messages.length}`);
         const budget = computeBudget(window.context, options);
         try {
           guardRequest(

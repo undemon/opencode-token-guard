@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { appliesToProvider, computeBudget, readOptions } from "../src/options.ts";
+import { appliesToProvider, computeBudget, effectiveWindow, readOptions } from "../src/options.ts";
 
 test("readOptions: defaults", () => {
   const options = readOptions(undefined);
@@ -37,6 +37,13 @@ test("computeBudget: maxContext caps the effective window", () => {
   assert.equal(computeBudget(110_592, options), 20_000 - 4000 - Math.floor(20_000 * 0.1));
   // Below the cap the backend window wins.
   assert.equal(computeBudget(10_000, options), 10_000 - 4000 - Math.floor(10_000 * 0.1));
+});
+
+test("effectiveWindow: caps by maxContext, otherwise the backend window", () => {
+  assert.equal(effectiveWindow(110_592, readOptions(undefined)), 110_592);
+  const capped = readOptions({ maxContext: 20_000 });
+  assert.equal(effectiveWindow(110_592, capped), 20_000);
+  assert.equal(effectiveWindow(10_000, capped), 10_000);
 });
 
 test("appliesToProvider", () => {

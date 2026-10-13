@@ -99,12 +99,19 @@ export function readOptions(raw: Record<string, unknown> | undefined): GuardOpti
 }
 
 /**
+ * The effective window used for the budget: the backend window capped by `maxContext`.
+ */
+export function effectiveWindow(window: number, options: GuardOptions): number {
+  return options.maxContext !== undefined ? Math.min(window, options.maxContext) : window;
+}
+
+/**
  * Request budget in tokens: the effective window minus the reply reserve and the
  * safety margin. The effective window is the backend window capped by `maxContext`,
  * so the guard never lets a request grow past the model's configured limit.
  */
 export function computeBudget(window: number, options: GuardOptions): number {
-  const effective = options.maxContext !== undefined ? Math.min(window, options.maxContext) : window;
+  const effective = effectiveWindow(window, options);
   const margin = Math.floor((effective * options.safetyMarginPct) / 100);
   const budget = effective - options.reservedOutputTokens - margin;
   return Math.max(0, budget);
