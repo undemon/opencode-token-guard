@@ -71,10 +71,12 @@ opencode reload
 | `tokenizerConfigPath` | string | — | Путь к `tokenizer_config.json` (необязательно) |
 | `syncLimit` | boolean | `true` | Синхронизировать `model.limit.context` с окном движка |
 | `syncLimitDownOnly` | boolean | `false` | Только понижать лимит, не повышать |
+| `maxContext` | number | — | Верхняя граница для `limit.context` (необязательно) |
 | `reservedOutputTokens` | number | `4096` | Резерв под ответ модели |
 | `safetyMarginPct` | number | `8` | Запас безопасности, % от окна |
 | `includeToolsInBudget` | boolean | `true` | Учитывать определения инструментов |
 | `debug` | boolean | `false` | Подробные логи |
+| `logFile` | string | — | Дублировать логи в файл (необязательно) |
 
 Бюджет запроса = `окно − reservedOutputTokens − safetyMarginPct% · окно`.
 
@@ -91,14 +93,15 @@ opencode reload
 
 ## Проверка
 
-Логи плагина идут в stdout сервиса OpenCode. Ищите строки с префиксом
-`[token-guard]`:
+Логи плагина помечаются префиксом `[token-guard]`. Они идут в stdout сервиса
+OpenCode либо в `logFile`, если он задан. Плагин сообщает загруженный режим,
+используемый токенизатор, окно бэкенда и каждое выполненное урезание:
 
 ```
-[token-guard] INFO загружен: режим=local, backend=http://127.0.0.1:1234
-[token-guard] INFO счётчик токенов: local(.../tokenizer.json)
-[token-guard] INFO окно бэкенда: 110592 токенов (lmstudio)
-[token-guard] INFO подрезан запрос: 108300 → 96100 токенов (бюджет 97728); чекпоинтов 2, результатов 0
+[token-guard] INFO loaded: mode=local, backend=http://127.0.0.1:1234
+[token-guard] INFO token counter: local(.../tokenizer.json)
+[token-guard] INFO backend window: 110592 tokens (lmstudio)
+[token-guard] INFO request trimmed: 108300 → 96100 tokens (budget 97728); checkpoints 2, results 0
 ```
 
 ## Разработка
