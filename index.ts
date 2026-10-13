@@ -56,7 +56,7 @@ export default Plugin.define({
               );
               if (plans.length > 0) {
                 logger.debug(
-                  `syncing limit.context → ${window}: ` +
+                  `syncing limit.context: ` +
                     plans.map((p) => `${p.providerID}/${p.modelID} ${p.from}→${p.to}`).join(", "),
                 );
               }
