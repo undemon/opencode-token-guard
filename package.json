@@ -1,0 +1,47 @@
+{
+  "name": "opencode-token-guard",
+  "version": "0.1.0",
+  "description": "OpenCode plugin: exact token counting with a local tokenizer and context-overflow protection (LM Studio mode; optional llama.cpp server delegation)",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "author": "Dmitriy Sopin",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "tokenizer",
+    "context-window",
+    "local-llm",
+    "lmstudio",
+    "llama.cpp"
+  ],
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "files": [
+    "index.ts",
+    "src",
+    "types",
+    "docs",
+    "README.md",
+    "README.ru.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --import tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "@huggingface/tokenizers": "^0.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

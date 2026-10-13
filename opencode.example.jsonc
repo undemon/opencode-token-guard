@@ -1,0 +1,45 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // Example plugin registration. Replace the path with the absolute path to this directory.
+  "plugins": [
+    {
+      "package": "/path/to/opencode-token-guard",
+      "options": {
+        // LM Studio backend base URL (no /v1, no trailing slash).
+        "backend": "http://127.0.0.1:1234",
+
+        // OpenCode providers the hooks and the limit sync apply to.
+        // An empty list = all providers.
+        "providerIDs": ["my-provider"],
+
+        // "local" — count with a local tokenizer.json (recommended for LM Studio).
+        "mode": "local",
+
+        // Path to tokenizer.json from the model folder (next to the GGUF).
+        // Windows: C:/Users/<user>/.lmstudio/models/<publisher>/<repo>/tokenizer.json
+        "tokenizerPath": "C:/Users/<user>/.lmstudio/models/<publisher>/<repo>/tokenizer.json",
+
+        // Optional:
+        // "tokenizerConfigPath": ".../tokenizer_config.json",
+
+        // Sync model.limit.context with the engine's actual window.
+        "syncLimit": true,
+        "syncLimitDownOnly": false,
+
+        // Upper bound for the window: never raise limit.context above this (optional).
+        // "maxContext": 104000,
+
+        // Budget = window − reservedOutputTokens − safetyMarginPct% of the window.
+        "reservedOutputTokens": 4096,
+        "safetyMarginPct": 8,
+
+        "includeToolsInBudget": true,
+        "debug": false
+
+        // File to duplicate logs to, when console is unavailable (optional).
+        // "logFile": "/tmp/opencode/token-guard.log"
+      }
+    }
+  ]
+}

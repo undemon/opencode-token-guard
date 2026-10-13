@@ -1,0 +1,15 @@
+node_modules/
+npm-debug.log*
+*.tgz
+
+# Local development artifacts
+.tokenizer-cache/
+models/
+*.local.json
+.env
+.env.*
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
