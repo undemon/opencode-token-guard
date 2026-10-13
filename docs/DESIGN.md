@@ -46,13 +46,17 @@ that the outgoing request fits the real budget.
    (the oldest part) is dropped, with a note
    `[token-guard: removed N characters of older context]`. The newest part is
    preserved.
-2. The oldest text parts beginning with `[Tool result]:` / `[Tool error]:` are
-   replaced with a short stub.
+2. The oldest tool results (`tool-result` parts, plus text parts beginning with
+   `[Tool result]:` / `[Tool error]:`) are replaced with a short stub
+   `[token-guard: tool output dropped to save context]`.
+3. The oldest whole exchanges (a user message and the replies grouped with it)
+   are removed. A checkpoint/summary or system message is never removed, nor is
+   the newest exchange.
 
 The "how many characters to remove" estimate is
 `excess_tokens × (chars/tokens) × 1.15`; after each edit the request is
-recounted (up to 8 iterations over checkpoints, then up to 64 over tool
-results).
+recounted (up to 8 iterations over checkpoints, then up to 64 over tool results,
+then up to 64 over exchanges).
 
 ### Limit sync
 
@@ -93,8 +97,6 @@ dependencies, ~8.3 KB gzip. The order of memory and time is the same.
 1. **Asynchronous `TokenCounter`** — to enable `delegate` mode and, optionally,
    to "calibrate" the estimate against reality (`prompt_tokens` from LM Studio
    responses).
-2. **Whole-history trimming** — not just `recent-context` in the checkpoint, but
-   also dropping whole request/response exchanges when the overflow is large.
-3. **Live-session test** — run a long session and compare `[token-guard]` logs
+2. **Live-session test** — run a long session and compare `[token-guard]` logs
    with the actual `prompt_tokens` from LM Studio.
-4. **Publication** — publish to GitHub after it has been exercised.
+3. **Publication** — publish to GitHub after it has been exercised.

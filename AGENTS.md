@@ -20,8 +20,9 @@ underestimates non-Latin text and dense structured data, and the configured
   and the model transform.
 - `src/options.ts` — option parsing and budget computation.
 - `src/guard.ts` — request trimming (stage 1: checkpoint `<recent-context>`;
-  stage 2: oldest tool results).
-- `src/text.ts` — text extraction and editable text slots.
+  stage 2: oldest tool results; stage 3: oldest whole exchanges).
+- `src/text.ts` — text extraction and editable text slots (text parts,
+  `tool-result` parts, string/`text` message content).
 - `src/tokenizer/` — `local.ts` (real tokenizer via `@huggingface/tokenizers`),
   `delegate.ts` (llama-server skeleton), `index.ts` (factory).
 - `src/backend/` — `lmstudio.ts` (`GET /api/v0/models`),
@@ -51,7 +52,11 @@ the real-tokenizer path.
   attempt to "fix the formula".
 - The guard must preserve the newest content: when trimming `<recent-context>`,
   drop its beginning (the oldest part) and keep the tail; never gut it below
-  `MIN_RECENT_CHARS`.
+  `MIN_RECENT_CHARS`. Exchange trimming must never remove a checkpoint/summary or
+  system message, nor the newest exchange.
+- When editing a `tool-result` part, keep its shape (the `result` discriminator
+  and an array `value`) and only swap the payload for a text stub, so the request
+  stays valid for the provider adapters.
 - Keep trimming conservative and idempotent: after edits the request is
   recounted, and trimming stops as soon as it fits.
 - LM Studio has no tokenization endpoint; unknown routes answer **HTTP 200** with

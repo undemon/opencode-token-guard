@@ -42,6 +42,7 @@ export interface GuardOutcome {
   budget: number;
   trimmedCheckpoints: number;
   droppedResults: number;
+  droppedExchanges: number;
   /** true if the budget was never reached. */
   stillOverBudget: boolean;
 }

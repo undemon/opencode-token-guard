@@ -25,7 +25,7 @@ export interface TextSlot {
   read(): string;
   write(next: string): void;
   /** Part type if the slot points to a part (otherwise "message"). */
-  readonly kind: string;
+  readonly kind: "text" | "message" | "tool-result";
 }
 
 function safeJson(value: unknown): string {
@@ -70,18 +70,54 @@ export function messageText(message: MessageLike): string {
   return "";
 }
 
+/**
+ * Replaces the payload of a tool-result part with `next`.
+ *
+ * The part shape is kept (the discriminator and the result container), only the
+ * value is swapped for a single text item, so the request stays valid for the
+ * provider adapters. Handles both the assembled-request form (`result.value`)
+ * and the looser `value`/`content` fallbacks.
+ */
+function writeToolResult(part: PartLike, next: string): void {
+  const replacement = (): { type: "text"; text: string }[] => [{ type: "text", text: next }];
+  const result = part.result;
+  if (result !== null && typeof result === "object") {
+    const container = result as PartLike;
+    container.value = Array.isArray(container.value) ? replacement() : next;
+    return;
+  }
+  if (part.value !== undefined) {
+    part.value = Array.isArray(part.value) ? replacement() : next;
+    return;
+  }
+  if (part.content !== undefined) {
+    part.content = Array.isArray(part.content) ? replacement() : next;
+    return;
+  }
+  part.result = { type: "content", value: replacement() };
+}
+
 /** Text slots of a message that are available for editing. */
 export function textSlots(message: MessageLike): TextSlot[] {
   const slots: TextSlot[] = [];
   const content = message.content;
   if (Array.isArray(content)) {
     content.forEach((part) => {
-      if (part && typeof part === "object" && part.type === "text" && typeof part.text === "string") {
+      if (part === null || typeof part !== "object") return;
+      if (part.type === "text" && typeof part.text === "string") {
         slots.push({
           kind: "text",
           read: () => part.text ?? "",
           write: (next: string) => {
             part.text = next;
+          },
+        });
+      } else if (part.type === "tool-result") {
+        slots.push({
+          kind: "tool-result",
+          read: () => partText(part),
+          write: (next: string) => {
+            writeToolResult(part, next);
           },
         });
       }

@@ -30,7 +30,8 @@
    инструменты) настоящим `tokenizer.json` модели.
 2. **Guard** — если запрос не укладывается в бюджет, режет по приоритету:
    сначала раздутый `<recent-context>` внутри чекпоинта (самый частый виновник),
-   затем старейшие выводы инструментов. Новейшая часть контекста сохраняется.
+   затем старейшие выводы инструментов, затем старейшие целые обмены. Новейшая
+   часть контекста, summary чекпоинта и новейший обмен сохраняются.
 3. **Синхронизация лимита** — читает `GET /api/v0/models` у LM Studio и
    выставляет `model.limit.context` равным реальному окну движка, убирая
    рассинхрон (конфиг-лимит может не совпадать с фактическим окном движка).
@@ -101,8 +102,12 @@ OpenCode либо в `logFile`, если он задан. Плагин сооб�
 [token-guard] INFO loaded: mode=local, backend=http://127.0.0.1:1234
 [token-guard] INFO token counter: local(.../tokenizer.json)
 [token-guard] INFO backend window: 110592 tokens (lmstudio)
-[token-guard] INFO request trimmed: 108300 → 96100 tokens (budget 97728); checkpoints 2, results 0
+[token-guard] INFO request trimmed: 108300 → 96100 tokens (budget 97728); checkpoints 2, results 0, exchanges 1
 ```
+
+Последняя строка сообщает, что именно срезано: `checkpoints` (подрезанный
+`<recent-context>`), `results` (выброшенные выводы инструментов), `exchanges`
+(удалённые целые обмены).
 
 ## Разработка
 

@@ -62,3 +62,28 @@ test("real tokenizer: an oversized checkpoint is trimmed to the budget, the tail
   const coreEstimate = Math.round(recent.length / 4);
   assert.ok(before > coreEstimate, `real ${before} must exceed the core estimate ${coreEstimate}`);
 });
+
+test("real tokenizer: oldest exchanges are dropped, the checkpoint survives", { skip }, () => {
+  const counter = createLocalCounter({ tokenizerPath });
+  const big = "The quick brown fox jumps over the lazy dog. ".repeat(400);
+  const request = {
+    system: [{ text: "system" }],
+    messages: [
+      checkpoint("small recent"),
+      { role: "user", content: big },
+      { role: "assistant", content: [{ type: "text", text: big }] },
+      { role: "user", content: "latest question" },
+    ],
+  };
+
+  const before = countRequest(counter, request, false);
+  const budget = Math.floor(before * 0.35);
+
+  const outcome = guardRequest(counter, request, { budget, includeToolsInBudget: false });
+
+  assert.ok(outcome.droppedExchanges >= 1, "an old exchange must be dropped");
+  assert.equal(outcome.stillOverBudget, false, "must fit the budget");
+  assert.ok(outcome.after <= budget, `after=${outcome.after} > budget=${budget}`);
+  assert.match(JSON.stringify(request.messages), /conversation-checkpoint/, "the checkpoint must survive");
+  assert.equal(request.messages.at(-1)!.content, "latest question", "the newest exchange must survive");
+});

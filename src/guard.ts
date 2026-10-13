@@ -4,9 +4,11 @@
  * Strategy (highest to lowest priority of what to cut):
  *  1) the <recent-context> content of a checkpoint — the most common culprit
  *     (the OpenCode core slices `recent` using its underestimated chars/4);
- *  2) the oldest tool results (tool-result).
+ *  2) the oldest tool results (tool-result parts and their text fallbacks);
+ *  3) the oldest whole exchanges (a user message plus its replies).
  * The newest content is preserved: inside recent-context its beginning
- * (the oldest part) is dropped, with a note about the removal.
+ * (the oldest part) is dropped, with a note about the removal; a checkpoint and
+ * the newest exchange are never removed.
  */
 
 import type { GuardOutcome, TokenCounter } from "./types.js";
@@ -14,6 +16,8 @@ import { messageText, textSlots, type MessageLike } from "./text.js";
 
 const CHECKPOINT_OPEN = "<recent-context>";
 const CHECKPOINT_CLOSE = "</recent-context>";
+/** Marks the synthetic summary message that must survive any history trimming. */
+const CHECKPOINT_MARK = "<conversation-checkpoint>";
 
 /** Minimum number of characters kept in recent-context so it is not gutted entirely. */
 const MIN_RECENT_CHARS = 400;
@@ -22,7 +26,7 @@ const DEFAULT_RATIO = 3;
 
 export interface GuardableRequest {
   system: ReadonlyArray<{ text?: string }>;
-  messages: ReadonlyArray<MessageLike>;
+  messages: MessageLike[];
   tools?: Record<string, unknown>;
 }
 
@@ -67,6 +71,7 @@ export function guardRequest(
     budget,
     trimmedCheckpoints: 0,
     droppedResults: 0,
+    droppedExchanges: 0,
     stillOverBudget: false,
   };
   settings.logger?.debug(`request estimate: ${before} tokens, budget ${budget}`);
@@ -88,12 +93,21 @@ export function guardRequest(
     outcome.droppedResults++;
   }
 
+  // Stage 3: drop the oldest whole exchanges (never the checkpoint or the newest exchange).
+  for (let attempt = 0; attempt < 64; attempt++) {
+    const excess = countRequest(counter, request, settings.includeToolsInBudget) - budget;
+    if (excess <= 0) break;
+    if (!dropOldestExchange(request)) break;
+    outcome.droppedExchanges++;
+  }
+
   outcome.after = countRequest(counter, request, settings.includeToolsInBudget);
   outcome.stillOverBudget = outcome.after > budget;
   if (outcome.after !== before && settings.logger) {
     settings.logger.info(
       `request trimmed: ${before} → ${outcome.after} tokens (budget ${budget}); ` +
-        `checkpoints ${outcome.trimmedCheckpoints}, results ${outcome.droppedResults}` +
+        `checkpoints ${outcome.trimmedCheckpoints}, results ${outcome.droppedResults}, ` +
+        `exchanges ${outcome.droppedExchanges}` +
         (outcome.stillOverBudget ? " [STILL OVER BUDGET]" : ""),
     );
   }
@@ -136,13 +150,50 @@ function dropOldestToolResult(request: GuardableRequest): boolean {
     for (const slot of textSlots(message)) {
       const text = slot.read();
       if (text.startsWith("[Tool result]:") || text.startsWith("[Tool error]:")) {
-        if (text.startsWith(DROPPED_MARK)) continue;
+        if (text.includes(DROPPED_MARK)) continue;
         slot.write(DROPPED_MARK);
         return true;
       }
     }
   }
   return false;
+}
+
+/**
+ * Removes the oldest whole exchange (a user message and the replies grouped with
+ * it). The checkpoint/summary and system messages are never removed, nor is the
+ * newest exchange. Returns false when nothing droppable is left.
+ */
+function dropOldestExchange(request: GuardableRequest): boolean {
+  const messages = request.messages;
+  // Group messages into exchanges: a new group starts at a user message, after a
+  // checkpoint/system message, or at the very beginning.
+  const groups: number[][] = [];
+  let forceNew = true;
+  messages.forEach((message, index) => {
+    if (forceNew || message.role === "user" || groups.length === 0) {
+      groups.push([index]);
+    } else {
+      groups[groups.length - 1]!.push(index);
+    }
+    forceNew = isProtected(message);
+  });
+  if (groups.length <= 1) return false;
+
+  const last = groups.length - 1;
+  for (let g = 0; g < last; g++) {
+    const group = groups[g]!;
+    if (group.some((index) => isProtected(messages[index]!))) continue;
+    messages.splice(group[0]!, group.length);
+    return true;
+  }
+  return false;
+}
+
+/** A message that must survive history trimming: a checkpoint/summary or a system message. */
+function isProtected(message: MessageLike): boolean {
+  if (message.role === "system") return true;
+  return messageText(message).includes(CHECKPOINT_MARK);
 }
 
 function safeStringify(value: unknown): string {

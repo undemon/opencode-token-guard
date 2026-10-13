@@ -31,8 +31,8 @@ window (`n_ctx`).
    tools) with the model's real `tokenizer.json`.
 2. **Guard** — if the request does not fit the budget, it trims by priority:
    first an oversized `<recent-context>` inside the checkpoint (the usual
-   culprit), then the oldest tool outputs. The newest part of the context is
-   preserved.
+   culprit), then the oldest tool outputs, then the oldest whole exchanges. The
+   newest content, the checkpoint summary, and the newest exchange are preserved.
 3. **Limit sync** — reads `GET /api/v0/models` from LM Studio and sets
    `model.limit.context` to the engine's real window, removing the mismatch
    (the configured limit may not match the engine's actual window).
@@ -97,7 +97,17 @@ Request budget = `window − reservedOutputTokens − safetyMarginPct% · window
 
 Plugin logs are prefixed with `[token-guard]`. They go to the OpenCode service
 stdout, or to `logFile` if set. The plugin reports the loaded mode, the tokenizer
-in use, the backend window, and every trim it performs.
+in use, the backend window, and every trim it performs:
+
+```
+[token-guard] INFO loaded: mode=local, backend=http://127.0.0.1:1234
+[token-guard] INFO token counter: local(.../tokenizer.json)
+[token-guard] INFO backend window: 110592 tokens (lmstudio)
+[token-guard] INFO request trimmed: 108300 → 96100 tokens (budget 97728); checkpoints 2, results 0, exchanges 1
+```
+
+The last line reports what was cut: `checkpoints` (trimmed `<recent-context>`),
+`results` (dropped tool outputs), `exchanges` (dropped whole exchanges).
 
 ## Development
 

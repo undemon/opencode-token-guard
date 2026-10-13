@@ -5,7 +5,8 @@
  *  1) counts tokens in the assembled request with the model's real tokenizer
  *     (the core's chars/4 badly underestimates non-Latin text and dense JSON);
  *  2) trims the request down to a safe budget (first an oversized
- *     <recent-context> in a checkpoint, then the oldest tool outputs);
+ *     <recent-context> in a checkpoint, then the oldest tool outputs, then the
+ *     oldest whole exchanges);
  *  3) syncs model.limit.context with the backend's actual window
  *     (LM Studio GET /api/v0/models), removing config/engine mismatch.
  */

@@ -56,3 +56,56 @@ test("when the budget is short, the oldest tool results are dropped as well", ()
   assert.ok(outcome.after <= 80);
   assert.equal(outcome.stillOverBudget, false);
 });
+
+test("tool-result parts (real request shape) are droppable", () => {
+  const messages: MessageLike[] = [
+    {
+      role: "assistant",
+      content: [
+        { type: "text", text: "let me check" },
+        {
+          type: "tool-result",
+          result: { type: "content", value: [{ type: "text", text: "x".repeat(1200) }] },
+        },
+      ],
+    },
+    { role: "user", content: "current question" },
+  ];
+  const outcome = guardRequest(fake, { system: [], messages }, { budget: 60, includeToolsInBudget: true });
+  assert.ok(outcome.droppedResults >= 1, "the tool-result part must be dropped");
+  assert.equal(outcome.stillOverBudget, false);
+
+  const content = messages[0]!.content as Array<{ type: string; text?: string; result?: unknown }>;
+  assert.equal(content[0]!.text, "let me check", "a sibling text part must be kept");
+  const result = content[1]!.result as { type: string; value: Array<{ type: string; text: string }> };
+  assert.equal(result.type, "content", "the result discriminator must be preserved");
+  assert.ok(Array.isArray(result.value), "the value must stay an array");
+  assert.match(result.value[0]!.text, /token-guard: tool output dropped/);
+});
+
+test("oldest whole exchanges are dropped when the budget is still exceeded", () => {
+  const messages: MessageLike[] = [
+    { role: "user", content: "old question " + "x".repeat(600) },
+    { role: "assistant", content: [{ type: "text", text: "old answer " + "y".repeat(600) }] },
+    { role: "user", content: "new question" },
+  ];
+  const outcome = guardRequest(fake, { system: [], messages }, { budget: 40, includeToolsInBudget: true });
+  assert.ok(outcome.droppedExchanges >= 1, "an exchange must be dropped");
+  assert.equal(messages.length, 1, "only the newest exchange must remain");
+  assert.equal(messages[0]!.content, "new question");
+  assert.equal(outcome.stillOverBudget, false);
+});
+
+test("exchange trimming never removes the checkpoint or the newest exchange", () => {
+  const messages: MessageLike[] = [
+    checkpoint(20),
+    { role: "user", content: "old question " + "x".repeat(900) },
+    { role: "assistant", content: "old reply " + "y".repeat(900) },
+    { role: "user", content: "new question" },
+  ];
+  const outcome = guardRequest(fake, { system: [], messages }, { budget: 60, includeToolsInBudget: true });
+  assert.ok(outcome.droppedExchanges >= 1, "an exchange must be dropped");
+  assert.match(JSON.stringify(messages), /conversation-checkpoint/, "the checkpoint must survive");
+  assert.equal(messages.at(-1)!.content, "new question", "the newest exchange must survive");
+  assert.equal(outcome.stillOverBudget, false);
+});
