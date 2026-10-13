@@ -7,7 +7,7 @@ test("readOptions: defaults", () => {
   const options = readOptions(undefined);
   assert.equal(options.mode, "local");
   assert.equal(options.syncLimit, true);
-  assert.equal(options.reservedOutputTokens, 4096);
+  assert.equal(options.reservedOutputTokens, 8192);
   assert.equal(options.safetyMarginPct, 8);
   assert.deepEqual(options.providerIDs, []);
 });
@@ -29,6 +29,14 @@ test("computeBudget: window minus reserve and margin", () => {
   const options = readOptions({ reservedOutputTokens: 4000, safetyMarginPct: 10 });
   assert.equal(computeBudget(110_592, options), 110_592 - 4000 - Math.floor(110_592 * 0.1));
   assert.equal(computeBudget(100, readOptions({ reservedOutputTokens: 1000, safetyMarginPct: 0 })), 0);
+});
+
+test("computeBudget: maxContext caps the effective window", () => {
+  const options = readOptions({ reservedOutputTokens: 4000, safetyMarginPct: 10, maxContext: 20_000 });
+  // Above the cap the backend window is replaced by maxContext (margin included).
+  assert.equal(computeBudget(110_592, options), 20_000 - 4000 - Math.floor(20_000 * 0.1));
+  // Below the cap the backend window wins.
+  assert.equal(computeBudget(10_000, options), 10_000 - 4000 - Math.floor(10_000 * 0.1));
 });
 
 test("appliesToProvider", () => {

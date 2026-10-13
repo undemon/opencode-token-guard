@@ -72,14 +72,14 @@ opencode reload
 | `tokenizerConfigPath` | string | — | Путь к `tokenizer_config.json` (необязательно) |
 | `syncLimit` | boolean | `true` | Синхронизировать `model.limit.context` с окном движка |
 | `syncLimitDownOnly` | boolean | `false` | Только понижать лимит, не повышать |
-| `maxContext` | number | — | Верхняя граница для `limit.context` (необязательно) |
-| `reservedOutputTokens` | number | `4096` | Резерв под ответ модели |
+| `maxContext` | number | — | Верхняя граница окна: ограничивает и `limit.context`, и бюджет запроса (необязательно) |
+| `reservedOutputTokens` | number | `8192` | Резерв под ответ модели |
 | `safetyMarginPct` | number | `8` | Запас безопасности, % от окна |
 | `includeToolsInBudget` | boolean | `true` | Учитывать определения инструментов |
 | `debug` | boolean | `false` | Подробные логи |
 | `logFile` | string | — | Дублировать логи в файл (необязательно) |
 
-Бюджет запроса = `окно − reservedOutputTokens − safetyMarginPct% · окно`.
+Бюджет запроса = `W − reservedOutputTokens − safetyMarginPct% · W`, где `W = min(окно, maxContext)`.
 
 ## Режимы
 

@@ -27,11 +27,11 @@
         "syncLimit": true,
         "syncLimitDownOnly": false,
 
-        // Upper bound for the window: never raise limit.context above this (optional).
+        // Upper bound for the window: caps limit.context and the request budget (optional).
         // "maxContext": 104000,
 
-        // Budget = window − reservedOutputTokens − safetyMarginPct% of the window.
-        "reservedOutputTokens": 4096,
+        // Budget = W − reservedOutputTokens − safetyMarginPct% of W, where W = min(window, maxContext).
+        "reservedOutputTokens": 8192,
         "safetyMarginPct": 8,
 
         "includeToolsInBudget": true,

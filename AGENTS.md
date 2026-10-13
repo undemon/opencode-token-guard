@@ -59,6 +59,9 @@ the real-tokenizer path.
   stays valid for the provider adapters.
 - Keep trimming conservative and idempotent: after edits the request is
   recounted, and trimming stops as soon as it fits.
+- The request budget is `W − reservedOutputTokens − safetyMarginPct% · W`, where
+  `W = min(backend window, maxContext)`. `maxContext` caps both `limit.context`
+  and the budget, so the two stay consistent.
 - LM Studio has no tokenization endpoint; unknown routes answer **HTTP 200** with
   `{"error":"Unexpected endpoint or method."}` — do not treat 200 as success.
 - `@opencode/plugin` is provided by the runtime, not npm. When it diverges from

@@ -8,7 +8,7 @@
  *       backend: "http://127.0.0.1:1234",
  *       mode: "local",
  *       tokenizerPath: "C:/…/tokenizer.json",
- *       reservedOutputTokens: 4096,
+ *       reservedOutputTokens: 8192,
  *       safetyMarginPct: 8,
  *     },
  *   }]
@@ -41,7 +41,7 @@ export interface GuardOptions {
   debug: boolean;
   /** File the log lines are mirrored to (optional; handy for verification). */
   logFile?: string;
-  /** Upper bound of the window: never raise limit.context above this value. */
+  /** Upper bound of the window: caps both limit.context and the request budget. */
   maxContext?: number;
 }
 
@@ -50,7 +50,7 @@ const DEFAULTS: GuardOptions = {
   providerIDs: [],
   syncLimit: true,
   syncLimitDownOnly: false,
-  reservedOutputTokens: 4096,
+  reservedOutputTokens: 8192,
   safetyMarginPct: 8,
   includeToolsInBudget: true,
   debug: false,
@@ -99,11 +99,14 @@ export function readOptions(raw: Record<string, unknown> | undefined): GuardOpti
 }
 
 /**
- * Request budget in tokens: the window minus the reply reserve and the safety margin.
+ * Request budget in tokens: the effective window minus the reply reserve and the
+ * safety margin. The effective window is the backend window capped by `maxContext`,
+ * so the guard never lets a request grow past the model's configured limit.
  */
 export function computeBudget(window: number, options: GuardOptions): number {
-  const margin = Math.floor((window * options.safetyMarginPct) / 100);
-  const budget = window - options.reservedOutputTokens - margin;
+  const effective = options.maxContext !== undefined ? Math.min(window, options.maxContext) : window;
+  const margin = Math.floor((effective * options.safetyMarginPct) / 100);
+  const budget = effective - options.reservedOutputTokens - margin;
   return Math.max(0, budget);
 }
 

@@ -73,14 +73,14 @@ opencode reload
 | `tokenizerConfigPath` | string | — | Path to `tokenizer_config.json` (optional) |
 | `syncLimit` | boolean | `true` | Sync `model.limit.context` with the engine window |
 | `syncLimitDownOnly` | boolean | `false` | Only lower the limit, never raise it |
-| `maxContext` | number | — | Upper bound for `limit.context` (optional) |
-| `reservedOutputTokens` | number | `4096` | Reserve for the model's reply |
+| `maxContext` | number | — | Upper bound for the window: caps both `limit.context` and the request budget (optional) |
+| `reservedOutputTokens` | number | `8192` | Reserve for the model's reply |
 | `safetyMarginPct` | number | `8` | Safety margin, % of the window |
 | `includeToolsInBudget` | boolean | `true` | Count tool definitions |
 | `debug` | boolean | `false` | Verbose logging |
 | `logFile` | string | — | Duplicate logs to a file (optional) |
 
-Request budget = `window − reservedOutputTokens − safetyMarginPct% · window`.
+Request budget = `W − reservedOutputTokens − safetyMarginPct% · W`, where `W = min(window, maxContext)`.
 
 ## Modes
 
