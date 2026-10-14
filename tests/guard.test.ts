@@ -64,6 +64,23 @@ test("an oversized recent-context becomes a marked digest, the wrapper survives"
   assert.ok(text.includes(ELISION), "the cut must be visible");
 });
 
+test("a checkpoint only slightly over the budget is condensed just enough to fit", () => {
+  const inner = `[Assistant]: HEAD-${"x".repeat(1400)}-TAIL`;
+  const messages: MessageLike[] = [checkpoint(inner), { role: "user", content: "latest question" }];
+
+  const outcome = guardRequest(fake, { system: [], messages }, settings(480));
+
+  assert.equal(outcome.condensedCheckpoints, 1, "the checkpoint must be condensed");
+  assert.equal(outcome.truncatedResults, 0);
+  assert.equal(outcome.droppedExchanges, 0, "no exchange should be dropped when condensing suffices");
+  assert.equal(outcome.stillOverBudget, false, "the request must fit");
+  assert.ok(outcome.after <= 480, `after=${outcome.after} > 480`);
+
+  const text = slotText(messages[0]!);
+  assert.ok(text.includes("HEAD-") && text.includes("-TAIL"), "both ends must survive");
+  assert.ok(text.includes(ELISION), "the cut must be visible");
+});
+
 test("reasoning: the newest block keeps its tail, older ones are omitted", () => {
   const old1 = `OLD-ONE ${"a".repeat(3000)}`;
   const old2 = `OLD-TWO ${"b".repeat(3000)}`;

@@ -22,6 +22,8 @@ const CHECKPOINT_OPEN = "<recent-context>";
 const CHECKPOINT_CLOSE = "</recent-context>";
 /** Marks the synthetic summary message that must survive any history trimming. */
 const CHECKPOINT_MARK = "<conversation-checkpoint>";
+/** A checkpoint digest is never condensed below this, so it keeps its meaning. */
+const MIN_DIGEST_TOKENS = 200;
 
 export interface GuardableRequest {
   system: ReadonlyArray<{ text?: string }>;
@@ -84,7 +86,7 @@ export function guardRequest(
 
   // Stage 1: condense checkpoint recent-context blobs into bounded digests.
   for (let attempt = 0; attempt < 4 && total > budget; attempt++) {
-    const delta = condenseOneCheckpoint(counter, request, settings, digestBudget);
+    const delta = condenseOneCheckpoint(counter, request, settings, digestBudget, total - budget);
     if (delta === 0) break;
     total -= delta;
     outcome.condensedCheckpoints += 1;
@@ -130,6 +132,7 @@ function condenseOneCheckpoint(
   request: GuardableRequest,
   settings: GuardSettings,
   digestBudget: number,
+  excess: number,
 ): number {
   for (const message of request.messages) {
     for (const slot of textSlots(message)) {
@@ -143,9 +146,11 @@ function condenseOneCheckpoint(
       const inner = text.slice(innerStart, close);
       if (inner.includes(DIGEST_MARK)) continue; // already condensed in this pass
       const innerTokens = counter.count(inner);
-      if (innerTokens <= digestBudget) continue;
+      // Aim for the smaller of the digest cap and what the excess actually needs.
+      const target = Math.max(MIN_DIGEST_TOKENS, Math.min(digestBudget, innerTokens - excess));
+      if (innerTokens <= target) continue;
 
-      const result = condenseEntries(counter, parseEntries(inner), settings.limits, digestBudget);
+      const result = condenseEntries(counter, parseEntries(inner), settings.limits, target);
       if (!result.changed) continue;
 
       const next = `${result.text}\n`;
