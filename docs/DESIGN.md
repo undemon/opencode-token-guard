@@ -40,23 +40,24 @@ that is available is editing the assembled request in
 `options` are mutable. So the plugin does not "fix the formula"; it guarantees
 that the outgoing request fits the real budget.
 
-### Trim order
+### Condense order
 
-1. The `<recent-context>` inside `<conversation-checkpoint>` — its beginning
-   (the oldest part) is dropped, with a note
-   `[token-guard: removed N characters of older context]`. The newest part is
-   preserved.
-2. The oldest tool results (`tool-result` parts, plus text parts beginning with
-   `[Tool result]:` / `[Tool error]:`) are replaced with a short stub
-   `[token-guard: tool output dropped to save context]`.
-3. The oldest whole exchanges (a user message and the replies grouped with it)
-   are removed. A checkpoint/summary or system message is never removed, nor is
-   the newest exchange.
+1. The `<recent-context>` inside `<conversation-checkpoint>` is rewritten into a
+   bounded digest (at most `digestShare · budget` tokens). Entries keep their
+   core-style prefixes; long ones are cut in the middle with `…`, reasoning
+   blocks other than the newest `reasoningKeep` become `[reasoning omitted]`, and
+   entries that still do not fit are dropped oldest-first behind a
+   `[token-guard: N earlier messages condensed]` notice. The digest starts with
+   `<!-- token-guard:condensed v1 -->`, which makes a repeated pass a no-op; the
+   checkpoint wrapper and its `<summary>` are never touched.
+2. Oversized tool results and shell outputs are shortened in place (head + tail),
+   keeping the part shape (`result.type`, array `value`).
+3. Only if the request still does not fit, the oldest whole exchanges are removed.
+   A checkpoint/summary, the digest, a system message and the newest exchange are
+   never removed.
 
-The "how many characters to remove" estimate is
-`excess_tokens × (chars/tokens) × 1.15`; after each edit the request is
-recounted (up to 8 iterations over checkpoints, then up to 64 over tool results,
-then up to 64 over exchanges).
+All limits are expressed in **real tokens** (the model's tokenizer) instead of
+`chars/4`, and the request is recounted while the guard works.
 
 ### Limit sync
 

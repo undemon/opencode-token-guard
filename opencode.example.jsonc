@@ -35,6 +35,22 @@
         "safetyMarginPct": 8,
 
         "includeToolsInBudget": true,
+
+        // Share of the request budget used as the cap for a condensed checkpoint digest.
+        "digestShare": 0.3,
+
+        // Per-entry token limits used while condensing.
+        "condense": {
+          "userTokens": 400,
+          "assistantTokens": 300,
+          "reasoningTailTokens": 500,
+          "reasoningKeep": 1,
+          "toolCallTokens": 120,
+          "toolResultTokens": 300,
+          "toolErrorTokens": 600,
+          "miscTokens": 200
+        },
+
         "debug": false
 
         // File to duplicate logs to, when console is unavailable (optional).

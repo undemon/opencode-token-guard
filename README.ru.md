@@ -28,10 +28,12 @@
 
 1. **Точный подсчёт** — токенизирует собранный запрос (system + история +
    инструменты) настоящим `tokenizer.json` модели.
-2. **Guard** — если запрос не укладывается в бюджет, режет по приоритету:
+2. **Guard** — если запрос не укладывается в бюджет, конденсирует по приоритету:
    сначала раздутый `<recent-context>` внутри чекпоинта (самый частый виновник),
-   затем старейшие выводы инструментов, затем старейшие целые обмены. Новейшая
-   часть контекста, summary чекпоинта и новейший обмен сохраняются.
+   затем раздутые выводы инструментов и shell-выводы, и лишь в последнюю очередь
+   старейшие целые обмены. Ничего не пропадает молча: каждое сжатие оставляет
+   видимую пометку, а summary чекпоинта, хвост новейшего reasoning и новейший
+   обмен сохраняются.
 3. **Синхронизация лимита** — читает `GET /api/v0/models` у LM Studio и
    выставляет `model.limit.context` равным реальному окну движка, убирая
    рассинхрон (конфиг-лимит может не совпадать с фактическим окном движка).
@@ -76,10 +78,14 @@ opencode reload
 | `reservedOutputTokens` | number | `8192` | Резерв под ответ модели |
 | `safetyMarginPct` | number | `8` | Запас безопасности, % от окна |
 | `includeToolsInBudget` | boolean | `true` | Учитывать определения инструментов |
+| `digestShare` | number | `0.3` | Доля бюджета запроса — потолок для дайджеста чекпоинта |
+| `condense` | object | см. ниже | Поэлементные лимиты токенов при конденсации |
 | `debug` | boolean | `false` | Подробные логи |
 | `logFile` | string | — | Дублировать логи в файл (необязательно) |
 
 Бюджет запроса = `W − reservedOutputTokens − safetyMarginPct% · W`, где `W = min(окно, maxContext)`.
+
+Значения `condense` по умолчанию: `userTokens 400`, `assistantTokens 300`, `reasoningTailTokens 500`, `reasoningKeep 1`, `toolCallTokens 120`, `toolResultTokens 300`, `toolErrorTokens 600`, `miscTokens 200`.
 
 ## Режимы
 
@@ -96,18 +102,18 @@ opencode reload
 
 Логи плагина помечаются префиксом `[token-guard]`. Они идут в stdout сервиса
 OpenCode либо в `logFile`, если он задан. Плагин сообщает загруженный режим,
-используемый токенизатор, окно бэкенда и каждое выполненное урезание:
+используемый токенизатор, окно бэкенда и каждый проход конденсации:
 
 ```
 [token-guard] INFO loaded: mode=local, backend=http://127.0.0.1:1234
 [token-guard] INFO token counter: local(.../tokenizer.json)
 [token-guard] INFO backend window: 110592 tokens (lmstudio)
-[token-guard] INFO request trimmed: 108300 → 96100 tokens (budget 97728); checkpoints 2, results 0, exchanges 1
+[token-guard] INFO request condensed: 108300 → 96100 tokens (budget 97728); checkpoints 2, truncated results 0, dropped exchanges 1
 ```
 
-Последняя строка сообщает, что именно срезано: `checkpoints` (подрезанный
-`<recent-context>`), `results` (выброшенные выводы инструментов), `exchanges`
-(удалённые целые обмены).
+Последняя строка сообщает, что именно изменено: `checkpoints` (сжатые
+`<recent-context>`), `truncated results` (укороченные выводы инструментов),
+`dropped exchanges` (удалённые целые обмены — последний рубеж).
 
 ## Разработка
 

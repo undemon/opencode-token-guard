@@ -29,10 +29,12 @@ window (`n_ctx`).
 
 1. **Exact counting** — tokenizes the assembled request (system + history +
    tools) with the model's real `tokenizer.json`.
-2. **Guard** — if the request does not fit the budget, it trims by priority:
+2. **Guard** — if the request does not fit the budget, it condenses by priority:
    first an oversized `<recent-context>` inside the checkpoint (the usual
-   culprit), then the oldest tool outputs, then the oldest whole exchanges. The
-   newest content, the checkpoint summary, and the newest exchange are preserved.
+   culprit), then oversized tool results and shell outputs, and only as a last
+   resort the oldest whole exchanges. Nothing is dropped silently: every
+   shortening leaves a visible marker, and the checkpoint summary, the newest
+   reasoning tail and the newest exchange are preserved.
 3. **Limit sync** — reads `GET /api/v0/models` from LM Studio and sets
    `model.limit.context` to the engine's real window, removing the mismatch
    (the configured limit may not match the engine's actual window).
@@ -77,10 +79,14 @@ opencode reload
 | `reservedOutputTokens` | number | `8192` | Reserve for the model's reply |
 | `safetyMarginPct` | number | `8` | Safety margin, % of the window |
 | `includeToolsInBudget` | boolean | `true` | Count tool definitions |
+| `digestShare` | number | `0.3` | Share of the request budget used as the cap for a condensed checkpoint digest |
+| `condense` | object | see below | Per-entry token limits used while condensing |
 | `debug` | boolean | `false` | Verbose logging |
 | `logFile` | string | — | Duplicate logs to a file (optional) |
 
 Request budget = `W − reservedOutputTokens − safetyMarginPct% · W`, where `W = min(window, maxContext)`.
+
+`condense` defaults: `userTokens 400`, `assistantTokens 300`, `reasoningTailTokens 500`, `reasoningKeep 1`, `toolCallTokens 120`, `toolResultTokens 300`, `toolErrorTokens 600`, `miscTokens 200`.
 
 ## Modes
 
@@ -97,17 +103,18 @@ Request budget = `W − reservedOutputTokens − safetyMarginPct% · W`, where `
 
 Plugin logs are prefixed with `[token-guard]`. They go to the OpenCode service
 stdout, or to `logFile` if set. The plugin reports the loaded mode, the tokenizer
-in use, the backend window, and every trim it performs:
+in use, the backend window, and every condense pass it performs:
 
 ```
 [token-guard] INFO loaded: mode=local, backend=http://127.0.0.1:1234
 [token-guard] INFO token counter: local(.../tokenizer.json)
 [token-guard] INFO backend window: 110592 tokens (lmstudio)
-[token-guard] INFO request trimmed: 108300 → 96100 tokens (budget 97728); checkpoints 2, results 0, exchanges 1
+[token-guard] INFO request condensed: 108300 → 96100 tokens (budget 97728); checkpoints 2, truncated results 0, dropped exchanges 1
 ```
 
-The last line reports what was cut: `checkpoints` (trimmed `<recent-context>`),
-`results` (dropped tool outputs), `exchanges` (dropped whole exchanges).
+The last line reports what was changed: `checkpoints` (condensed
+`<recent-context>` blobs), `truncated results` (shortened tool outputs),
+`dropped exchanges` (whole exchanges removed as a last resort).
 
 ## Development
 
