@@ -16,6 +16,8 @@
 
 export type GuardMode = "local" | "delegate";
 
+import { DEFAULT_LIMITS, type CondenseLimits } from "./condense.js";
+
 export interface GuardOptions {
   /** How to count tokens: with a local tokenizer or by delegating to the backend. */
   mode: GuardMode;
@@ -43,6 +45,10 @@ export interface GuardOptions {
   logFile?: string;
   /** Upper bound of the window: caps both limit.context and the request budget. */
   maxContext?: number;
+  /** Share of the request budget used as the cap for a condensed digest (0–1). */
+  digestShare: number;
+  /** Per-entry token limits used while condensing. */
+  condense: CondenseLimits;
 }
 
 const DEFAULTS: GuardOptions = {
@@ -54,6 +60,8 @@ const DEFAULTS: GuardOptions = {
   safetyMarginPct: 8,
   includeToolsInBudget: true,
   debug: false,
+  digestShare: 0.3,
+  condense: DEFAULT_LIMITS,
 };
 
 function str(value: unknown): string | undefined {
@@ -70,6 +78,26 @@ function bool(value: unknown, fallback: boolean): boolean {
 
 function optNum(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+/** A share of the budget: a finite number strictly between 0 and 1. */
+function share(value: unknown, fallback: number): number {
+  const parsed = num(value, fallback);
+  return parsed > 0 && parsed < 1 ? parsed : fallback;
+}
+
+function readLimits(raw: unknown): CondenseLimits {
+  const o = raw !== null && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  return {
+    userTokens: num(o.userTokens, DEFAULT_LIMITS.userTokens),
+    assistantTokens: num(o.assistantTokens, DEFAULT_LIMITS.assistantTokens),
+    reasoningTailTokens: num(o.reasoningTailTokens, DEFAULT_LIMITS.reasoningTailTokens),
+    reasoningKeep: Math.max(0, Math.floor(num(o.reasoningKeep, DEFAULT_LIMITS.reasoningKeep))),
+    toolCallTokens: num(o.toolCallTokens, DEFAULT_LIMITS.toolCallTokens),
+    toolResultTokens: num(o.toolResultTokens, DEFAULT_LIMITS.toolResultTokens),
+    toolErrorTokens: num(o.toolErrorTokens, DEFAULT_LIMITS.toolErrorTokens),
+    miscTokens: num(o.miscTokens, DEFAULT_LIMITS.miscTokens),
+  };
 }
 
 export function readOptions(raw: Record<string, unknown> | undefined): GuardOptions {
@@ -95,6 +123,8 @@ export function readOptions(raw: Record<string, unknown> | undefined): GuardOpti
     debug: bool(o.debug, DEFAULTS.debug),
     ...(str(o.logFile) !== undefined ? { logFile: str(o.logFile) } : {}),
     ...(optNum(o.maxContext) !== undefined ? { maxContext: optNum(o.maxContext) } : {}),
+    digestShare: share(o.digestShare, DEFAULTS.digestShare),
+    condense: readLimits(o.condense),
   };
 }
 

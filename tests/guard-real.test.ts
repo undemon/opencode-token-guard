@@ -3,13 +3,21 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { countRequest, guardRequest } from "../src/guard.ts";
+import { countRequest, guardRequest, type GuardSettings } from "../src/guard.ts";
+import { DEFAULT_LIMITS, DIGEST_MARK, REASONING_OMITTED } from "../src/condense.ts";
 import { createLocalCounter } from "../src/tokenizer/local.ts";
 import type { MessageLike } from "../src/text.ts";
 
 const tokenizerPath = fileURLToPath(new URL("../models/tokenizer.json", import.meta.url));
 const available = existsSync(tokenizerPath);
 const skip = available ? false : `tokenizer file not found: ${tokenizerPath}`;
+
+const settings = (budget: number): GuardSettings => ({
+  budget,
+  includeToolsInBudget: false,
+  digestShare: 0.3,
+  limits: DEFAULT_LIMITS,
+});
 
 function checkpoint(recent: string): MessageLike {
   return {
@@ -23,21 +31,34 @@ function checkpoint(recent: string): MessageLike {
   };
 }
 
+function slotText(message: MessageLike): string {
+  const content = message.content;
+  if (Array.isArray(content)) return content.map((part) => part.text ?? "").join("\n");
+  return typeof content === "string" ? content : (message.text ?? "");
+}
+
 /**
- * A realistic "recent": token-dense structured data plus some prose. Structured
- * data and non-Latin scripts are exactly where the core's chars/4 heuristic
- * underestimates the most.
+ * A realistic checkpoint tail: newline-separated entries in the core's own
+ * rendering, token-dense (JSON tool output) and with several reasoning blocks —
+ * exactly the shape the core's chars/4 heuristic underestimates.
  */
 function bigRecent(): string {
+  const lines: string[] = [];
   const json = JSON.stringify({
     status: "ok",
     items: Array.from({ length: 40 }, (_, i) => ({ id: i, tags: ["alpha", "beta"] })),
   });
-  const prose = "A short prose sample used to vary token density across the fixture. ";
-  return (json.repeat(70) + prose.repeat(150)).slice(0, 120_000);
+  for (let i = 0; i < 25; i++) {
+    lines.push(`[User]: A short prose sample used to vary token density across the fixture, round ${i}.`);
+    lines.push(`[Assistant reasoning]: Thinking about round ${i}: ${"considerations ".repeat(40)}`);
+    lines.push(`[Assistant tool call]: read({"filePath":"/tmp/fixture-${i}.json","limit":2000})`);
+    lines.push(`[Tool result]: ${json}`);
+    lines.push(`[Assistant]: Round ${i} is done; the fixture stays token-dense on purpose.`);
+  }
+  return lines.join("\n");
 }
 
-test("real tokenizer: an oversized checkpoint is trimmed to the budget, the tail is preserved", { skip }, () => {
+test("real tokenizer: an oversized checkpoint is condensed, the wrapper and tail survive", { skip }, () => {
   const counter = createLocalCounter({ tokenizerPath });
   const recent = bigRecent();
   const request = { system: [{ text: "system" }], messages: [checkpoint(recent)] };
@@ -46,17 +67,19 @@ test("real tokenizer: an oversized checkpoint is trimmed to the budget, the tail
   const tail = recent.slice(-200); // the newest tail must survive
   const budget = Math.floor(before * 0.5);
 
-  const outcome = guardRequest(counter, request, { budget, includeToolsInBudget: false });
+  const outcome = guardRequest(counter, request, settings(budget));
 
   assert.equal(outcome.stillOverBudget, false, "must fit the budget");
-  assert.ok(outcome.trimmedCheckpoints >= 1, "the checkpoint must be trimmed");
+  assert.ok(outcome.condensedCheckpoints >= 1, "the checkpoint must be condensed");
   assert.ok(outcome.after <= budget, `after=${outcome.after} > budget=${budget}`);
   assert.ok(outcome.after < before, "the size must shrink");
 
-  const text = ((request.messages[0]?.content as Array<{ text?: string }>)[0]?.text) ?? "";
-  assert.match(text, /token-guard: removed/, "a removal note must be present");
+  const text = slotText(request.messages[0]!);
+  assert.ok(text.includes(DIGEST_MARK), "the digest must be marked");
+  assert.ok(text.includes(REASONING_OMITTED), "older reasoning must be omitted, not silently dropped");
   assert.ok(text.includes(tail), "the newest recent-context tail must be preserved");
-  assert.match(text, /<\/recent-context>/, "the checkpoint wrapper must remain");
+  assert.ok(text.includes("</recent-context>"), "the checkpoint wrapper must remain");
+  assert.ok(text.includes("<summary>brief summary</summary>"), "the summary must not be touched");
 
   // chars/4 (the core estimate) underestimates: the real token count is clearly higher.
   const coreEstimate = Math.round(recent.length / 4);
@@ -79,7 +102,7 @@ test("real tokenizer: oldest exchanges are dropped, the checkpoint survives", { 
   const before = countRequest(counter, request, false);
   const budget = Math.floor(before * 0.35);
 
-  const outcome = guardRequest(counter, request, { budget, includeToolsInBudget: false });
+  const outcome = guardRequest(counter, request, settings(budget));
 
   assert.ok(outcome.droppedExchanges >= 1, "an old exchange must be dropped");
   assert.equal(outcome.stillOverBudget, false, "must fit the budget");

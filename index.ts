@@ -106,7 +106,7 @@ export default Plugin.define({
               messages: event.messages,
               ...(options.includeToolsInBudget ? { tools: event.tools } : {}),
             },
-            { budget, includeToolsInBudget: options.includeToolsInBudget, logger },
+            { budget, includeToolsInBudget: options.includeToolsInBudget, digestShare: options.digestShare, limits: options.condense, logger },
           );
         } catch (error) {
           logger.warn(`guard failed: ${(error as Error).message}`);

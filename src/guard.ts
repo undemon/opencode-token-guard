@@ -1,28 +1,27 @@
 /**
  * Guard: brings the assembled request down to a token budget.
  *
- * Strategy (highest to lowest priority of what to cut):
- *  1) the <recent-context> content of a checkpoint — the most common culprit
- *     (the OpenCode core slices `recent` using its underestimated chars/4);
- *  2) the oldest tool results (tool-result parts and their text fallbacks);
- *  3) the oldest whole exchanges (a user message plus its replies).
- * The newest content is preserved: inside recent-context its beginning
- * (the oldest part) is dropped, with a note about the removal; a checkpoint and
- * the newest exchange are never removed.
+ * Strategy (highest to lowest priority of what to change):
+ *  1) condense a checkpoint's `<recent-context>` blob into a bounded digest —
+ *     the core slices that tail with its underestimated chars/4, so it can be
+ *     several times larger than `keep.tokens` suggests;
+ *  2) truncate oversized tool results and shell outputs in place (head + tail);
+ *  3) drop the oldest whole exchanges (a user message plus its replies) — the
+ *     last resort, always marked.
+ *
+ * The newest content is preserved: a checkpoint/summary, a system message, the
+ * digest produced by this guard, and the newest exchange are never removed.
+ * Nothing is dropped silently — every shortening leaves a visible marker.
  */
 
 import type { GuardOutcome, TokenCounter } from "./types.js";
 import { messageText, textSlots, type MessageLike } from "./text.js";
+import { DIGEST_MARK, condenseEntries, parseEntries, truncateTokens, type CondenseLimits } from "./condense.js";
 
 const CHECKPOINT_OPEN = "<recent-context>";
 const CHECKPOINT_CLOSE = "</recent-context>";
 /** Marks the synthetic summary message that must survive any history trimming. */
 const CHECKPOINT_MARK = "<conversation-checkpoint>";
-
-/** Minimum number of characters kept in recent-context so it is not gutted entirely. */
-const MIN_RECENT_CHARS = 400;
-/** "chars per token" ratio used to convert the excess tokens into characters. */
-const DEFAULT_RATIO = 3;
 
 export interface GuardableRequest {
   system: ReadonlyArray<{ text?: string }>;
@@ -33,6 +32,10 @@ export interface GuardableRequest {
 export interface GuardSettings {
   budget: number;
   includeToolsInBudget: boolean;
+  /** Share of the budget used as the cap for a condensed checkpoint digest. */
+  digestShare: number;
+  /** Per-entry token limits used while condensing. */
+  limits: CondenseLimits;
   logger?: { info(message: string, data?: unknown): void; debug(message: string, data?: unknown): void };
 }
 
@@ -48,8 +51,7 @@ export function countRequest(counter: TokenCounter, request: GuardableRequest, i
     }
   }
   for (const message of request.messages) {
-    const text = messageText(message);
-    if (text !== "") total += counter.count(text);
+    total += messageTokens(counter, message);
   }
   return total;
 }
@@ -64,57 +66,71 @@ export function guardRequest(
   settings: GuardSettings,
 ): GuardOutcome {
   const { budget } = settings;
-  let before = countRequest(counter, request, settings.includeToolsInBudget);
+  let total = countRequest(counter, request, settings.includeToolsInBudget);
+  const before = total;
   const outcome: GuardOutcome = {
     before,
     after: before,
     budget,
-    trimmedCheckpoints: 0,
-    droppedResults: 0,
+    condensedCheckpoints: 0,
+    truncatedResults: 0,
     droppedExchanges: 0,
     stillOverBudget: false,
   };
   settings.logger?.debug(`request estimate: ${before} tokens, budget ${budget}`);
-  if (before <= budget) return outcome;
+  if (total <= budget) return outcome;
 
-  // Stage 1: trim recent-context inside checkpoints.
-  for (let attempt = 0; attempt < 8; attempt++) {
-    const excess = countRequest(counter, request, settings.includeToolsInBudget) - budget;
-    if (excess <= 0) break;
-    if (!trimOneRecentContext(counter, request, excess)) break;
-    outcome.trimmedCheckpoints++;
+  const digestBudget = Math.max(1, Math.floor(budget * settings.digestShare));
+
+  // Stage 1: condense checkpoint recent-context blobs into bounded digests.
+  for (let attempt = 0; attempt < 4 && total > budget; attempt++) {
+    const delta = condenseOneCheckpoint(counter, request, settings, digestBudget);
+    if (delta === 0) break;
+    total -= delta;
+    outcome.condensedCheckpoints += 1;
   }
 
-  // Stage 2: drop the oldest tool results.
-  for (let attempt = 0; attempt < 64; attempt++) {
-    const excess = countRequest(counter, request, settings.includeToolsInBudget) - budget;
-    if (excess <= 0) break;
-    if (!dropOldestToolResult(request)) break;
-    outcome.droppedResults++;
+  // Stage 2: truncate oversized tool results and shell outputs in place.
+  for (let attempt = 0; attempt < 64 && total > budget; attempt++) {
+    const delta = truncateOneToolResult(counter, request, settings);
+    if (delta === 0) break;
+    total -= delta;
+    outcome.truncatedResults += 1;
   }
 
-  // Stage 3: drop the oldest whole exchanges (never the checkpoint or the newest exchange).
-  for (let attempt = 0; attempt < 64; attempt++) {
-    const excess = countRequest(counter, request, settings.includeToolsInBudget) - budget;
-    if (excess <= 0) break;
-    if (!dropOldestExchange(request)) break;
-    outcome.droppedExchanges++;
+  // Stage 3: drop the oldest whole exchanges (last resort).
+  for (let attempt = 0; attempt < 64 && total > budget; attempt++) {
+    const delta = dropOldestExchange(counter, request);
+    if (delta === 0) break;
+    total -= delta;
+    outcome.droppedExchanges += 1;
   }
 
   outcome.after = countRequest(counter, request, settings.includeToolsInBudget);
   outcome.stillOverBudget = outcome.after > budget;
   if (outcome.after !== before && settings.logger) {
     settings.logger.info(
-      `request trimmed: ${before} → ${outcome.after} tokens (budget ${budget}); ` +
-        `checkpoints ${outcome.trimmedCheckpoints}, results ${outcome.droppedResults}, ` +
-        `exchanges ${outcome.droppedExchanges}` +
+      `request condensed: ${before} → ${outcome.after} tokens (budget ${budget}); ` +
+        `checkpoints ${outcome.condensedCheckpoints}, truncated results ${outcome.truncatedResults}, ` +
+        `dropped exchanges ${outcome.droppedExchanges}` +
         (outcome.stillOverBudget ? " [STILL OVER BUDGET]" : ""),
     );
   }
   return outcome;
 }
 
-function trimOneRecentContext(counter: TokenCounter, request: GuardableRequest, excessTokens: number): boolean {
+function messageTokens(counter: TokenCounter, message: MessageLike): number {
+  const text = messageText(message);
+  return text === "" ? 0 : counter.count(text);
+}
+
+/** Returns the number of tokens removed, or 0 when nothing changed. */
+function condenseOneCheckpoint(
+  counter: TokenCounter,
+  request: GuardableRequest,
+  settings: GuardSettings,
+  digestBudget: number,
+): number {
   for (const message of request.messages) {
     for (const slot of textSlots(message)) {
       const text = slot.read();
@@ -122,52 +138,73 @@ function trimOneRecentContext(counter: TokenCounter, request: GuardableRequest, 
       if (open < 0) continue;
       const close = text.lastIndexOf(CHECKPOINT_CLOSE);
       if (close <= open) continue;
+
       const innerStart = open + CHECKPOINT_OPEN.length;
       const inner = text.slice(innerStart, close);
-      if (inner.length <= MIN_RECENT_CHARS) continue;
+      if (inner.includes(DIGEST_MARK)) continue; // already condensed in this pass
+      const innerTokens = counter.count(inner);
+      if (innerTokens <= digestBudget) continue;
 
-      const ratio = inner.length / Math.max(1, counter.count(inner));
-      const charsToRemove = Math.max(
-        200,
-        Math.ceil(excessTokens * (Number.isFinite(ratio) && ratio > 1 ? ratio : DEFAULT_RATIO) * 1.15),
-      );
-      const drop = Math.min(charsToRemove, inner.length - MIN_RECENT_CHARS);
-      if (drop <= 0) continue;
+      const result = condenseEntries(counter, parseEntries(inner), settings.limits, digestBudget);
+      if (!result.changed) continue;
 
-      const note = `[token-guard: removed ${drop} characters of older context]\n`;
-      const newInner = note + inner.slice(drop);
-      slot.write(text.slice(0, innerStart) + newInner + text.slice(close));
-      return true;
+      const next = `${result.text}\n`;
+      slot.write(text.slice(0, innerStart) + next + text.slice(close));
+      return Math.max(1, innerTokens - counter.count(next));
     }
   }
-  return false;
+  return 0;
 }
 
-const DROPPED_MARK = "[token-guard: tool output dropped to save context]";
-
-function dropOldestToolResult(request: GuardableRequest): boolean {
+/** Returns the number of tokens removed, or 0 when nothing changed. */
+function truncateOneToolResult(counter: TokenCounter, request: GuardableRequest, settings: GuardSettings): number {
+  const { limits } = settings;
   for (const message of request.messages) {
     for (const slot of textSlots(message)) {
       const text = slot.read();
-      if (text.startsWith("[Tool result]:") || text.startsWith("[Tool error]:")) {
-        if (text.includes(DROPPED_MARK)) continue;
-        slot.write(DROPPED_MARK);
-        return true;
-      }
+      const match = /^\[(Tool result|Tool error)\]: ([\s\S]*)$/.exec(text);
+      if (!match) continue;
+
+      const body = match[2] ?? "";
+      const isError = match[1] === "Tool error";
+      const limit = isError ? limits.toolErrorTokens : limits.toolResultTokens;
+      const tokens = counter.count(body);
+      if (tokens <= limit) continue;
+
+      const shortened = truncateTokens(counter, body, limit, "both");
+      // A tool-result part keeps only its payload; a plain text part keeps its prefix.
+      slot.write(slot.kind === "tool-result" ? shortened : `[${match[1]}]: ${shortened}`);
+      return Math.max(1, tokens - counter.count(shortened));
     }
   }
-  return false;
+  return 0;
 }
 
 /**
  * Removes the oldest whole exchange (a user message and the replies grouped with
- * it). The checkpoint/summary and system messages are never removed, nor is the
- * newest exchange. Returns false when nothing droppable is left.
+ * it). Returns the number of tokens removed, or 0 when nothing is droppable.
  */
-function dropOldestExchange(request: GuardableRequest): boolean {
+function dropOldestExchange(counter: TokenCounter, request: GuardableRequest): number {
   const messages = request.messages;
-  // Group messages into exchanges: a new group starts at a user message, after a
-  // checkpoint/system message, or at the very beginning.
+  const groups = buildExchangeGroups(messages);
+  if (groups.length <= 1) return 0;
+
+  const last = groups.length - 1;
+  for (let g = 0; g < last; g++) {
+    const group = groups[g]!;
+    if (group.some((index) => isProtected(messages[index]!))) continue;
+    const removed = group.reduce((sum, index) => sum + messageTokens(counter, messages[index]!), 0);
+    messages.splice(group[0]!, group.length);
+    return Math.max(1, removed);
+  }
+  return 0;
+}
+
+/**
+ * Groups messages into exchanges: a new group starts at a user message, after a
+ * checkpoint/system message, or at the very beginning.
+ */
+function buildExchangeGroups(messages: ReadonlyArray<MessageLike>): number[][] {
   const groups: number[][] = [];
   let forceNew = true;
   messages.forEach((message, index) => {
@@ -178,22 +215,14 @@ function dropOldestExchange(request: GuardableRequest): boolean {
     }
     forceNew = isProtected(message);
   });
-  if (groups.length <= 1) return false;
-
-  const last = groups.length - 1;
-  for (let g = 0; g < last; g++) {
-    const group = groups[g]!;
-    if (group.some((index) => isProtected(messages[index]!))) continue;
-    messages.splice(group[0]!, group.length);
-    return true;
-  }
-  return false;
+  return groups;
 }
 
-/** A message that must survive history trimming: a checkpoint/summary or a system message. */
+/** A message that must survive history trimming: a checkpoint/summary, the digest, or a system message. */
 function isProtected(message: MessageLike): boolean {
   if (message.role === "system") return true;
-  return messageText(message).includes(CHECKPOINT_MARK);
+  const text = messageText(message);
+  return text.includes(CHECKPOINT_MARK) || text.includes(DIGEST_MARK);
 }
 
 function safeStringify(value: unknown): string {

@@ -40,8 +40,11 @@ export interface GuardOutcome {
   before: number;
   after: number;
   budget: number;
-  trimmedCheckpoints: number;
-  droppedResults: number;
+  /** Checkpoints whose `<recent-context>` was condensed into a digest. */
+  condensedCheckpoints: number;
+  /** Tool results / shell outputs shortened in place. */
+  truncatedResults: number;
+  /** Whole exchanges removed as a last resort. */
   droppedExchanges: number;
   /** true if the budget was never reached. */
   stillOverBudget: boolean;
