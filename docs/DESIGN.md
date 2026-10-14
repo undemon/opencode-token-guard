@@ -65,7 +65,11 @@ that the outgoing request fits the real budget.
    results and the newest exchange are never removed.
 
 All limits are expressed in **real tokens** (the model's tokenizer) instead of
-`chars/4`, and the request is recounted while the guard works.
+`chars/4`, and the request is recounted while the guard works. Sizes are measured
+on the text the model actually reads — a result's payload (the joined
+`value[*].text`) rather than its `[Tool result]: ` rendering with the JSON
+escaping around it — and every edit is accounted for by re-rendering the slot on
+both sides of the change.
 
 ### Limit sync
 

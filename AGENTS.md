@@ -66,6 +66,11 @@ the real-tokenizer path.
 - When editing a `tool-result` part, keep its shape (the `result` discriminator
   and an array `value`) and only swap the payload for a text stub, so the request
   stays valid for the provider adapters.
+- Measure and shorten the payload text of a result (`toolResultText`, the joined
+  `value[*].text`), never the `[Tool result]: ` rendered form with its JSON
+  escaping — that inflates the apparent size. Account for an edit with the slot's
+  rendered size before and after, and re-measure at stage boundaries before
+  escalating: per-string counting drifts.
 - Keep trimming conservative and idempotent: after edits the request is
   recounted, and trimming stops as soon as it fits.
 - The request budget is `W − reservedOutputTokens − safetyMarginPct% · W`, where
