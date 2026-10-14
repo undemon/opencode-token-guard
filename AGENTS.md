@@ -47,6 +47,37 @@ underestimates non-Latin text and dense structured data, and the configured
 file is gitignored (~11 MB). Copy your model's `tokenizer.json` there to exercise
 the real-tokenizer path.
 
+Live checks against a real backend are the only ones that need an OpenCode
+session, and they must **never** edit the shared global config
+(`~/.config/opencode/opencode.jsonc`). The server watches that file and reloads
+plugins as soon as it changes, so the edit also hits the session you are running
+in. Dropping `@tarquinen/opencode-dcp@latest` is the worst case: that plugin is
+what prunes the live session's own context (its `dcp.jsonc` compresses at 35–60%
+of the limit), and without it the session's requests ballooned to ~650k tokens
+before the provider answered `HTTP 400` (`AI.Error.InvalidRequest`, body
+`{"model":"deepseek-v4.1-flash"}`) on four turns in a row — the session only came
+back after a manual compaction shrank the history to ~64k tokens.
+
+Put the test overrides in a project config instead — discovered from the project
+root, which must be a git repository (a plain directory is ignored):
+
+```sh
+mkdir -p /tmp/opencode/guard-test && cd /tmp/opencode/guard-test && git init -q .
+cat > opencode.jsonc <<'JSON'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    { "package": "/home/dsopin/workspace/opencode-token-guard",
+      "options": { "providerIDs": ["lmstudio-mainpc"], "maxContext": 16000 } }
+  ]
+}
+JSON
+opencode run --title "guard test" "…"
+```
+
+If the global file must be touched anyway, copy it aside first and restore it
+before doing anything else.
+
 ## Hard constraints
 
 - The core token estimate (`chars/4`) cannot be changed from a plugin. The only
