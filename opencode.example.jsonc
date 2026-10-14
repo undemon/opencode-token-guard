@@ -48,7 +48,8 @@
           "toolCallTokens": 120,
           "toolResultTokens": 300,
           "toolErrorTokens": 600,
-          "miscTokens": 200
+          "miscTokens": 200,
+          "ledgerKeep": 2
         },
 
         "debug": false

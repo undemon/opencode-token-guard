@@ -31,10 +31,12 @@ window (`n_ctx`).
    tools) with the model's real `tokenizer.json`.
 2. **Guard** — if the request does not fit the budget, it condenses by priority:
    first an oversized `<recent-context>` inside the checkpoint (the usual
-   culprit), then oversized tool results and shell outputs, and only as a last
-   resort the oldest whole exchanges. Nothing is dropped silently: every
-   shortening leaves a visible marker, and the checkpoint summary, the newest
-   reasoning tail and the newest exchange are preserved.
+   culprit), then oversized tool results and shell outputs (cut just enough to
+   fit, saying so in the payload), then — once per-result truncation no longer
+   helps — a one-line ledger entry per result, and only as a last resort the
+   oldest whole exchanges. Nothing is dropped silently: every shortening leaves
+   a visible marker, and the checkpoint summary, the newest reasoning tail, the
+   newest `ledgerKeep` results and the newest exchange are preserved.
 3. **Limit sync** — reads `GET /api/v0/models` from LM Studio and sets
    `model.limit.context` to the engine's real window, removing the mismatch
    (the configured limit may not match the engine's actual window).
@@ -86,7 +88,7 @@ opencode reload
 
 Request budget = `W − reservedOutputTokens − safetyMarginPct% · W`, where `W = min(window, maxContext)`.
 
-`condense` defaults: `userTokens 400`, `assistantTokens 300`, `reasoningTailTokens 500`, `reasoningKeep 1`, `toolCallTokens 120`, `toolResultTokens 300`, `toolErrorTokens 600`, `miscTokens 200`.
+`condense` defaults: `userTokens 400`, `assistantTokens 300`, `reasoningTailTokens 500`, `reasoningKeep 1`, `toolCallTokens 120`, `toolResultTokens 300`, `toolErrorTokens 600`, `miscTokens 200`, `ledgerKeep 2`.
 
 ## Modes
 
@@ -109,11 +111,12 @@ in use, the backend window, and every condense pass it performs:
 [token-guard] INFO loaded: mode=local, backend=http://127.0.0.1:1234
 [token-guard] INFO token counter: local(.../tokenizer.json)
 [token-guard] INFO backend window: 110592 tokens (lmstudio)
-[token-guard] INFO request condensed: 108300 → 96100 tokens (budget 97728); checkpoints 2, truncated results 0, dropped exchanges 1
+[token-guard] INFO request condensed: 108300 → 96100 tokens (budget 97728); checkpoints 2, truncated results 0, condensed results 1, dropped exchanges 1
 ```
 
 The last line reports what was changed: `checkpoints` (condensed
 `<recent-context>` blobs), `truncated results` (shortened tool outputs),
+`condensed results` (results replaced by a one-line ledger entry),
 `dropped exchanges` (whole exchanges removed as a last resort).
 
 ## Development

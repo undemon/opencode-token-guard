@@ -50,11 +50,19 @@ that the outgoing request fits the real budget.
    `[token-guard: N earlier messages condensed]` notice. The digest starts with
    `<!-- token-guard:condensed v1 -->`, which makes a repeated pass a no-op; the
    checkpoint wrapper and its `<summary>` are never touched.
-2. Oversized tool results and shell outputs are shortened in place (head + tail),
-   keeping the part shape (`result.type`, array `value`).
-3. Only if the request still does not fit, the oldest whole exchanges are removed.
-   A checkpoint/summary, the digest, a system message and the newest exchange are
-   never removed.
+2. Oversized tool results and shell outputs are shortened in place, cutting just
+   enough to fit and leaving room for a one-line notice
+   (`[token-guard] truncated: kept 4210 of 12940 tokens (67% elided to fit the
+   context budget; re-running returns the same).`). The part shape is kept
+   (`result.type`, array `value`).
+3. Once per-result truncation no longer helps, the oldest oversized results —
+   never the newest `ledgerKeep` (2) — are replaced by a single ledger line each:
+   `[token-guard] condensed: read /tmp/big.json — was ~3400 tok, elided to fit
+   the budget`, plus one shared note per request asking for narrow reads or a
+   subagent instead of re-running the call.
+4. Only if the request still does not fit, the oldest whole exchanges are removed.
+   A checkpoint/summary, the digest, a system message, the newest `ledgerKeep`
+   results and the newest exchange are never removed.
 
 All limits are expressed in **real tokens** (the model's tokenizer) instead of
 `chars/4`, and the request is recounted while the guard works.

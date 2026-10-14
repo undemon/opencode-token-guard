@@ -20,8 +20,9 @@ underestimates non-Latin text and dense structured data, and the configured
   and the model transform.
 - `src/options.ts` — option parsing and budget computation.
 - `src/guard.ts` — request condensing (stage 1: a checkpoint's `<recent-context>`
-  into a bounded digest; stage 2: oversized tool results truncated in place;
-  stage 3: oldest whole exchanges dropped as a last resort).
+  into a bounded digest; stage 2: oversized tool results truncated just enough,
+  with a notice; stage 3: a one-line ledger entry per oldest oversized result;
+  stage 4: oldest whole exchanges dropped as a last resort).
 - `src/condense.ts` — entry parsing, per-kind token limits and the digest builder.
 - `src/text.ts` — text extraction and editable text slots (text parts,
   `tool-result` parts, string/`text` message content).
@@ -58,8 +59,10 @@ the real-tokenizer path.
   Never remove a checkpoint/summary, the digest, a system message or the newest
   exchange.
 - Every shortening must stay visible (`…`, `[reasoning omitted]`,
-  `[token-guard: N earlier messages condensed]`), and condensing must be
-  idempotent: the digest starts with `DIGEST_MARK`, so a second pass is a no-op.
+  `[token-guard: N earlier messages condensed]`, `[token-guard] truncated: kept X
+  of Y tokens`, `[token-guard] condensed: <tool> <target> — was ~N tok`), and
+  condensing must be idempotent: the digest starts with `DIGEST_MARK` and the
+  notice markers are detected, so a second pass is a no-op.
 - When editing a `tool-result` part, keep its shape (the `result` discriminator
   and an array `value`) and only swap the payload for a text stub, so the request
   stays valid for the provider adapters.

@@ -30,10 +30,12 @@
    инструменты) настоящим `tokenizer.json` модели.
 2. **Guard** — если запрос не укладывается в бюджет, конденсирует по приоритету:
    сначала раздутый `<recent-context>` внутри чекпоинта (самый частый виновник),
-   затем раздутые выводы инструментов и shell-выводы, и лишь в последнюю очередь
-   старейшие целые обмены. Ничего не пропадает молча: каждое сжатие оставляет
-   видимую пометку, а summary чекпоинта, хвост новейшего reasoning и новейший
-   обмен сохраняются.
+   затем раздутые выводы инструментов и shell-выводы (режутся ровно настолько,
+   чтобы влезть, и говорят об этом в самом выводе), затем — когда поштучное
+   усечение перестаёт помогать — одна строка-ведомость на результат, и лишь в
+   последнюю очередь старейшие целые обмены. Ничего не пропадает молча: каждое
+   сжатие оставляет видимую пометку, а summary чекпоинта, хвост новейшего
+   reasoning, новейшие `ledgerKeep` результатов и новейший обмен сохраняются.
 3. **Синхронизация лимита** — читает `GET /api/v0/models` у LM Studio и
    выставляет `model.limit.context` равным реальному окну движка, убирая
    рассинхрон (конфиг-лимит может не совпадать с фактическим окном движка).
@@ -85,7 +87,7 @@ opencode reload
 
 Бюджет запроса = `W − reservedOutputTokens − safetyMarginPct% · W`, где `W = min(окно, maxContext)`.
 
-Значения `condense` по умолчанию: `userTokens 400`, `assistantTokens 300`, `reasoningTailTokens 500`, `reasoningKeep 1`, `toolCallTokens 120`, `toolResultTokens 300`, `toolErrorTokens 600`, `miscTokens 200`.
+Значения `condense` по умолчанию: `userTokens 400`, `assistantTokens 300`, `reasoningTailTokens 500`, `reasoningKeep 1`, `toolCallTokens 120`, `toolResultTokens 300`, `toolErrorTokens 600`, `miscTokens 200`, `ledgerKeep 2`.
 
 ## Режимы
 
@@ -108,11 +110,12 @@ OpenCode либо в `logFile`, если он задан. Плагин сооб�
 [token-guard] INFO loaded: mode=local, backend=http://127.0.0.1:1234
 [token-guard] INFO token counter: local(.../tokenizer.json)
 [token-guard] INFO backend window: 110592 tokens (lmstudio)
-[token-guard] INFO request condensed: 108300 → 96100 tokens (budget 97728); checkpoints 2, truncated results 0, dropped exchanges 1
+[token-guard] INFO request condensed: 108300 → 96100 tokens (budget 97728); checkpoints 2, truncated results 0, condensed results 1, dropped exchanges 1
 ```
 
 Последняя строка сообщает, что именно изменено: `checkpoints` (сжатые
 `<recent-context>`), `truncated results` (укороченные выводы инструментов),
+`condensed results` (результаты, заменённые одной строкой ведомости),
 `dropped exchanges` (удалённые целые обмены — последний рубеж).
 
 ## Разработка
