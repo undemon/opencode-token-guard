@@ -97,6 +97,85 @@ export function writeToolResult(part: PartLike, next: string): void {
   part.result = { type: "content", value: replacement() };
 }
 
+/**
+ * The output text a `tool-result` part carries, without its rendered `[Tool
+ * result]: ` prefix and without the JSON envelope around it. This is what the
+ * model actually reads, so it is what must be measured and shortened.
+ */
+export function toolResultText(part: PartLike): string {
+  const result = part.result;
+  const container = result !== null && typeof result === "object" ? (result as PartLike) : undefined;
+  const value = container?.value ?? part.value ?? part.content;
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((item) =>
+        item !== null && typeof item === "object" && typeof (item as PartLike).text === "string"
+          ? ((item as PartLike).text as string)
+          : safeJson(item),
+      )
+      .join("\n");
+  }
+  if (value !== undefined) return safeJson(value);
+  return safeJson(result);
+}
+
+/**
+ * An editable slot over tool output. `read`/`write` deal in the payload the
+ * model reads (no prefix, no JSON envelope); `render` returns the whole rendered
+ * slot, which is what token accounting must use on both sides of an edit.
+ */
+export interface ResultSlot {
+  read(): string;
+  write(next: string): void;
+  render(): string;
+  readonly kind: "tool-result" | "text";
+}
+
+/** The result slot behind a part, or undefined when the part holds no tool output. */
+export function resultSlotForPart(part: PartLike): ResultSlot | undefined {
+  if (part.type === "tool-result") {
+    return {
+      kind: "tool-result",
+      read: () => toolResultText(part),
+      write: (next: string) => {
+        writeToolResult(part, next);
+      },
+      render: () => partText(part),
+    };
+  }
+  if (part.type === "text" && typeof part.text === "string") {
+    const found = /^\[(Tool result|Tool error)\]: ([\s\S]*)$/.exec(part.text);
+    if (!found) return undefined;
+    const label = found[1] as string;
+    return {
+      kind: "text",
+      read: () => {
+        const current = /^\[(Tool result|Tool error)\]: ([\s\S]*)$/.exec(part.text ?? "");
+        return current?.[2] ?? "";
+      },
+      write: (next: string) => {
+        part.text = `[${label}]: ${next}`;
+      },
+      render: () => part.text ?? "",
+    };
+  }
+  return undefined;
+}
+
+/** Result slots of a message, in content order. */
+export function resultSlots(message: MessageLike): ResultSlot[] {
+  const content = message.content;
+  if (!Array.isArray(content)) return [];
+  const slots: ResultSlot[] = [];
+  for (const part of content) {
+    if (part === null || typeof part !== "object") continue;
+    const slot = resultSlotForPart(part);
+    if (slot) slots.push(slot);
+  }
+  return slots;
+}
+
 /** Text slots of a message that are available for editing. */
 export function textSlots(message: MessageLike): TextSlot[] {
   const slots: TextSlot[] = [];

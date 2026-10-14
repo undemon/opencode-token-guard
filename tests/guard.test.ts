@@ -243,3 +243,31 @@ test("stage 3 replaces the oldest oversized results with a ledger line", () => {
   assert.ok(!all.includes("A".repeat(600)), "the ledgered payload must be replaced");
   assert.ok(all.includes("B".repeat(300)) && all.includes("C".repeat(300)), "the newest results stay");
 });
+
+test("the ledger keeps condensing until the request fits, sparing the newest results", () => {
+  const exchange = (file: string, letter: string): MessageLike => ({
+    role: "assistant",
+    content: [
+      { type: "tool-call", name: "read", input: { filePath: file } },
+      { type: "tool-result", result: { type: "content", value: [{ type: "text", text: letter.repeat(3000) }] } },
+    ],
+  });
+  const messages: MessageLike[] = [
+    ...["a", "b", "c", "d", "e"].map((letter) => exchange(`/tmp/${letter}.json`, letter.toUpperCase())),
+    { role: "user", content: "latest question" },
+  ];
+
+  const outcome = guardRequest(fake, { system: [], messages }, settings(1400));
+
+  assert.equal(outcome.truncatedResults, 5, "every oversized result is truncated first");
+  assert.ok(outcome.condensedResults >= 1, "the ledger must take over once truncation is spent");
+  assert.equal(outcome.droppedExchanges, 0, "no exchange should be dropped while the ledger suffices");
+  assert.equal(outcome.stillOverBudget, false, "the request must fit");
+
+  const all = JSON.stringify(messages);
+  assert.ok(all.includes(LEDGER_MARK), "the ledger line must be present");
+  assert.ok(all.includes("/tmp/a.json"), "the ledger must name the file it replaced");
+  assert.equal(all.split(LEDGER_GUIDANCE).length - 1, 1, "the guidance must appear once per request");
+  // The newest two results are the model's working set: they must survive.
+  assert.ok(all.includes("D".repeat(300)) && all.includes("E".repeat(300)), "the newest results stay");
+});

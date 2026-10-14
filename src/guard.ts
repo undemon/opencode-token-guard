@@ -20,7 +20,7 @@
  */
 
 import type { GuardOutcome, TokenCounter } from "./types.js";
-import { messageText, partText, textSlots, writeToolResult, type MessageLike, type TextSlot } from "./text.js";
+import { messageText, resultSlotForPart, resultSlots, textSlots, type MessageLike, type ResultSlot } from "./text.js";
 import {
   DIGEST_MARK,
   LEDGER_GUIDANCE,
@@ -100,6 +100,9 @@ export function guardRequest(
   if (total <= budget) return outcome;
 
   const digestBudget = Math.max(1, Math.floor(budget * settings.digestShare));
+  // Edits report their own savings, but counting is only exact per string, so
+  // re-measure at every stage boundary before escalating to the next stage.
+  const recount = (): number => countRequest(counter, request, settings.includeToolsInBudget);
 
   // Stage 1: condense checkpoint recent-context blobs into bounded digests.
   for (let attempt = 0; attempt < 4 && total > budget; attempt++) {
@@ -110,6 +113,7 @@ export function guardRequest(
   }
 
   // Stage 2: truncate oversized tool results and shell outputs in place.
+  total = recount();
   for (let attempt = 0; attempt < 64 && total > budget; attempt++) {
     const delta = truncateOneToolResult(counter, request, settings, total - budget);
     if (delta === 0) break;
@@ -118,6 +122,7 @@ export function guardRequest(
   }
 
   // Stage 3: replace the oldest oversized results with one-line ledger entries.
+  total = recount();
   for (let attempt = 0; attempt < 64 && total > budget; attempt++) {
     const delta = condenseOneResultToLedger(counter, request, settings);
     if (delta === 0) break;
@@ -133,7 +138,7 @@ export function guardRequest(
     outcome.droppedExchanges += 1;
   }
 
-  outcome.after = countRequest(counter, request, settings.includeToolsInBudget);
+  outcome.after = recount();
   outcome.stillOverBudget = outcome.after > budget;
   if (outcome.after !== before && settings.logger) {
     settings.logger.info(
@@ -195,18 +200,12 @@ function truncateOneToolResult(
 ): number {
   const { limits } = settings;
   for (const message of request.messages) {
-    for (const slot of textSlots(message)) {
-      const text = slot.read();
-      const match = /^\[(Tool result|Tool error)\]: ([\s\S]*)$/.exec(text);
-      if (!match) continue;
-
-      const body = match[2] ?? "";
-      // Already shortened or replaced by this guard: leave it alone. (For a
-      // tool-result part the notice lives inside the JSON payload, so match
-      // anywhere rather than only at the start.)
+    for (const slot of resultSlots(message)) {
+      const body = slot.read();
+      // Already shortened or replaced by this guard: leave it alone.
       if (body.includes(TRUNCATION_MARK) || body.includes(LEDGER_MARK)) continue;
 
-      const isError = match[1] === "Tool error";
+      const isError = slot.render().startsWith("[Tool error]:");
       const floor = isError ? limits.toolErrorTokens : limits.toolResultTokens;
       const tokens = counter.count(body);
       if (tokens <= floor) continue;
@@ -216,20 +215,19 @@ function truncateOneToolResult(
       if (tokens <= target) continue;
 
       const shortened = truncateTokens(counter, body, target, "both");
-      const payload = `${truncationNotice(counter.count(shortened), tokens)}\n${shortened}`;
-      // A tool-result part keeps only its payload; a plain text part keeps its prefix.
-      slot.write(slot.kind === "tool-result" ? payload : `[${match[1]}]: ${payload}`);
-      return Math.max(1, tokens - counter.count(payload));
+      const before = counter.count(slot.render());
+      slot.write(`${truncationNotice(counter.count(shortened), tokens)}\n${shortened}`);
+      return Math.max(1, before - counter.count(slot.render()));
     }
   }
   return 0;
 }
 
-/** Rough room reserved for the truncation notice and the part prefix when sizing the cut. */
+/** Rough room reserved for the truncation notice when sizing the cut. */
 const NOTICE_ALLOWANCE = 80;
 
 interface ResultCandidate {
-  slot: TextSlot;
+  slot: ResultSlot;
   tool: string;
   target: string;
   tokens: number;
@@ -254,10 +252,9 @@ function condenseOneResultToLedger(counter: TokenCounter, request: GuardableRequ
   const candidate = remaining.reduce((best, next) => (next.tokens > best.tokens ? next : best));
   const notice = ledgerNotice(candidate.tool, candidate.target, candidate.tokens);
   const payload = requestHasGuidance(request) ? notice : `${notice}\n${LEDGER_GUIDANCE}`;
-  const oldText = candidate.slot.read();
-  const newText = candidate.slot.kind === "tool-result" ? payload : `[Tool result]: ${payload}`;
-  candidate.slot.write(newText);
-  return Math.max(1, counter.count(oldText) - counter.count(newText));
+  const before = counter.count(candidate.slot.render());
+  candidate.slot.write(payload);
+  return Math.max(1, before - counter.count(candidate.slot.render()));
 }
 
 /** Tool results in request order, paired with the tool call that produced them. */
@@ -268,20 +265,14 @@ function collectResultCandidates(counter: TokenCounter, request: GuardableReques
     if (!Array.isArray(content)) continue;
     let call = { tool: "tool", target: "" };
     for (const part of content) {
+      if (part === null || typeof part !== "object") continue;
       if (part.type === "tool-call") {
         call = { tool: typeof part.name === "string" && part.name !== "" ? part.name : "tool", target: toolTarget(part.input) };
         continue;
       }
-      if (part.type !== "tool-result") continue;
-      const slot: TextSlot = {
-        kind: "tool-result",
-        read: () => partText(part),
-        write: (next: string) => {
-          writeToolResult(part, next);
-        },
-      };
-      const rendered = slot.read();
-      candidates.push({ slot, tool: call.tool, target: call.target, tokens: originalResultTokens(counter, rendered) });
+      const slot = resultSlotForPart(part);
+      if (!slot) continue;
+      candidates.push({ slot, tool: call.tool, target: call.target, tokens: originalResultTokens(counter, slot) });
     }
   }
   return candidates;
@@ -292,10 +283,11 @@ function collectResultCandidates(counter: TokenCounter, request: GuardableReques
  * truncation notice records it), otherwise its current size. Keeps the ledger
  * honest about what the call actually cost.
  */
-function originalResultTokens(counter: TokenCounter, rendered: string): number {
-  const match = /of (\d+) tokens/.exec(rendered);
-  if (rendered.includes(TRUNCATION_MARK) && match?.[1]) return Number(match[1]);
-  return counter.count(rendered);
+function originalResultTokens(counter: TokenCounter, slot: ResultSlot): number {
+  const body = slot.read();
+  const match = /of (\d+) tokens/.exec(body);
+  if (body.includes(TRUNCATION_MARK) && match?.[1]) return Number(match[1]);
+  return counter.count(body);
 }
 
 /** Best-effort description of what a tool call operated on. */

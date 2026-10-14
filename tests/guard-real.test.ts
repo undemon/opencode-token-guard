@@ -110,3 +110,71 @@ test("real tokenizer: oldest exchanges are dropped, the checkpoint survives", { 
   assert.match(JSON.stringify(request.messages), /conversation-checkpoint/, "the checkpoint must survive");
   assert.equal(request.messages.at(-1)!.content, "latest question", "the newest exchange must survive");
 });
+
+/**
+ * A realistic large tool result: many lines, token-dense (paths, numbers, JSON),
+ * the shape that the core's chars/4 heuristic underestimates.
+ */
+function bigToolText(): string {
+  return Array.from({ length: 300 }, (_, i) => `row ${i}: {"path":"src/handlers/service-${i}.ts","lines":120,"checksum":${i * 7919}}`).join("\n");
+}
+
+test("real tokenizer: results are truncated as text and the ledger closes the gap", { skip }, () => {
+  const counter = createLocalCounter({ tokenizerPath });
+  const text = bigToolText();
+  const exchange = (file: string): MessageLike => ({
+    role: "assistant",
+    content: [
+      { type: "tool-call", name: "read", input: { filePath: file } },
+      { type: "tool-result", result: { type: "content", value: [{ type: "text", text }] } },
+    ],
+  });
+  const files = ["one", "two", "three", "four", "five", "six"];
+  const request = {
+    system: [{ text: "system" }],
+    messages: [...files.map((name) => exchange(`/tmp/${name}.json`)), { role: "user", content: "latest question" }],
+  };
+
+  const before = countRequest(counter, request, false);
+  // The non-result overhead (system, the tool calls, the newest user message):
+  const overhead = countRequest(
+    counter,
+    {
+      system: [{ text: "system" }],
+      messages: [
+        ...files.map(() => ({
+          role: "assistant",
+          content: [
+            { type: "tool-call", name: "read", input: { filePath: "/tmp/placeholder.json" } },
+            { type: "tool-result", result: { type: "content", value: [{ type: "text", text: "" }] } },
+          ],
+        })),
+        { role: "user", content: "latest question" },
+      ],
+    },
+    false,
+  );
+  // Every result at its floor (the limit plus its notice): the smallest the
+  // request can get from truncation alone. Aim below that, so only the ledger
+  // can close the gap.
+  const floorTotal = overhead + files.length * (DEFAULT_LIMITS.toolResultTokens + 80);
+  assert.ok(floorTotal < before, "the fixture must be big enough to overflow the floor");
+  const budget = floorTotal - 200;
+
+  const outcome = guardRequest(counter, request, settings(budget));
+
+  assert.ok(outcome.truncatedResults >= 1, "oversized results must be truncated first");
+  assert.ok(outcome.condensedResults >= 1, "the ledger must take over once truncation is spent");
+  assert.equal(outcome.droppedExchanges, 0, "the ledger should be enough here");
+  assert.equal(outcome.stillOverBudget, false, "must fit the budget");
+  assert.ok(outcome.after <= budget, `after=${outcome.after} > budget=${budget}`);
+
+  const all = JSON.stringify(request.messages);
+  assert.ok(all.includes("[token-guard] truncated:"), "the truncation must be marked");
+  assert.ok(all.includes("[token-guard] condensed:"), "the ledger line must be present");
+  assert.ok(all.includes("/tmp/one.json"), "the ledger must name the file it replaced");
+  assert.match(all, /was ~\d+ tok/);
+  // The payload is plain text (notice + head … tail), never a sliced JSON envelope.
+  assert.ok(!all.includes('\\"value\\"'), "a kept result must not carry a sliced JSON envelope");
+  assert.ok(all.includes("row 0:"), "the head of the kept result must survive");
+});
