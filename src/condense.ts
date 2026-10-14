@@ -19,6 +19,28 @@ export const DIGEST_MARK = "<!-- token-guard:condensed v1 -->";
 export const REASONING_OMITTED = "[reasoning omitted]";
 /** Inserted where text was cut. */
 export const ELISION = "…";
+/** Prefixes a tool result that was shortened in place. */
+export const TRUNCATION_MARK = "[token-guard] truncated:";
+/** Prefixes a tool result that was replaced by a one-line ledger entry. */
+export const LEDGER_MARK = "[token-guard] condensed:";
+/** Shown once per request that gained ledger entries, so the model stops re-reading. */
+export const LEDGER_GUIDANCE =
+  "Re-running a condensed call returns the same condensation — prefer narrow reads (line ranges, grep) or delegate the summarization to a subagent.";
+
+/**
+ * Notice placed above a shortened tool result: how much survived, and that the
+ * result will not grow on a retry.
+ */
+export function truncationNotice(keptTokens: number, totalTokens: number): string {
+  const elided = totalTokens > 0 ? Math.max(0, Math.round((1 - keptTokens / totalTokens) * 100)) : 0;
+  return `${TRUNCATION_MARK} kept ${keptTokens} of ${totalTokens} tokens (${elided}% elided to fit the context budget; re-running returns the same)`;
+}
+
+/** One-line ledger entry: what was called, on what, and how large it was. */
+export function ledgerNotice(tool: string, target: string, totalTokens: number): string {
+  const where = target === "" ? "" : ` ${target}`;
+  return `${LEDGER_MARK} ${tool}${where} — was ~${totalTokens} tok, elided to fit the budget`;
+}
 
 export type EntryKind =
   | "user"
@@ -57,6 +79,8 @@ export interface CondenseLimits {
   toolErrorTokens: number;
   /** Max tokens kept for anything else (synthetic context, skills, …). */
   miscTokens: number;
+  /** How many newest tool results are never replaced by a ledger entry. */
+  ledgerKeep: number;
 }
 
 export const DEFAULT_LIMITS: CondenseLimits = {
@@ -68,6 +92,7 @@ export const DEFAULT_LIMITS: CondenseLimits = {
   toolResultTokens: 300,
   toolErrorTokens: 600,
   miscTokens: 200,
+  ledgerKeep: 2,
 };
 
 const PREFIXES: ReadonlyArray<{ prefix: string; kind: EntryKind }> = [

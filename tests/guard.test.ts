@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { guardRequest, type GuardSettings } from "../src/guard.ts";
-import { DEFAULT_LIMITS, DIGEST_MARK, ELISION, REASONING_OMITTED } from "../src/condense.ts";
+import { DEFAULT_LIMITS, DIGEST_MARK, ELISION, LEDGER_GUIDANCE, LEDGER_MARK, REASONING_OMITTED, TRUNCATION_MARK } from "../src/condense.ts";
 import type { TokenCounter } from "../src/types.ts";
 import type { MessageLike } from "../src/text.ts";
 
@@ -191,4 +191,55 @@ test("condensing is idempotent: a second pass changes nothing", () => {
   assert.equal(second.condensedCheckpoints, 0, "the digest must not be condensed again");
   assert.equal(second.after, second.before, "the second pass must be a no-op");
   assert.equal(slotText(request.messages[0]!), digest);
+});
+
+test("stage 2 truncates just enough and marks the truncation", () => {
+  const messages: MessageLike[] = [
+    { role: "assistant", content: [{ type: "text", text: `[Tool result]: ${"x".repeat(3000)}` }] },
+    { role: "user", content: "current question" },
+  ];
+
+  const outcome = guardRequest(fake, { system: [], messages }, settings(420));
+
+  assert.equal(outcome.truncatedResults, 1);
+  assert.equal(outcome.condensedResults, 0);
+  assert.equal(outcome.droppedExchanges, 0);
+  assert.equal(outcome.stillOverBudget, false, "one oversized result must be cut just enough to fit");
+
+  const text = slotText(messages[0]!);
+  assert.ok(text.startsWith("[Tool result]: "), "the prefix must stay");
+  assert.ok(text.includes(TRUNCATION_MARK), "the truncation must be marked");
+  assert.ok(text.includes(ELISION), "the cut must be visible");
+  assert.ok(text.includes("of 1000 tokens"), "the notice must report the original size");
+});
+
+test("stage 3 replaces the oldest oversized results with a ledger line", () => {
+  const exchange = (file: string, letter: string): MessageLike => ({
+    role: "assistant",
+    content: [
+      { type: "tool-call", name: "read", input: { filePath: file } },
+      { type: "tool-result", result: { type: "content", value: [{ type: "text", text: letter.repeat(3000) }] } },
+    ],
+  });
+  const messages: MessageLike[] = [
+    exchange("/tmp/a.json", "A"),
+    exchange("/tmp/b.json", "B"),
+    exchange("/tmp/c.json", "C"),
+    { role: "user", content: "latest question" },
+  ];
+
+  const outcome = guardRequest(fake, { system: [], messages }, settings(900));
+
+  assert.equal(outcome.truncatedResults, 3, "every oversized result is truncated first");
+  assert.equal(outcome.condensedResults, 1, "the oldest eligible result becomes a ledger line");
+  assert.equal(outcome.droppedExchanges, 0);
+  assert.equal(outcome.stillOverBudget, false);
+
+  const all = JSON.stringify(messages);
+  assert.ok(all.includes(LEDGER_MARK), "the ledger line must be present");
+  assert.ok(all.includes("/tmp/a.json"), "the ledger must name the file");
+  assert.match(all, /was ~1\d{3} tok/, "the ledger must report the original size, not the truncated one");
+  assert.equal(all.split(LEDGER_GUIDANCE).length - 1, 1, "the guidance must appear once per request");
+  assert.ok(!all.includes("A".repeat(600)), "the ledgered payload must be replaced");
+  assert.ok(all.includes("B".repeat(300)) && all.includes("C".repeat(300)), "the newest results stay");
 });

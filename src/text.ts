@@ -78,7 +78,7 @@ export function messageText(message: MessageLike): string {
  * provider adapters. Handles both the assembled-request form (`result.value`)
  * and the looser `value`/`content` fallbacks.
  */
-function writeToolResult(part: PartLike, next: string): void {
+export function writeToolResult(part: PartLike, next: string): void {
   const replacement = (): { type: "text"; text: string }[] => [{ type: "text", text: next }];
   const result = part.result;
   if (result !== null && typeof result === "object") {

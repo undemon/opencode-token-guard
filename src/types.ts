@@ -44,6 +44,8 @@ export interface GuardOutcome {
   condensedCheckpoints: number;
   /** Tool results / shell outputs shortened in place. */
   truncatedResults: number;
+  /** Tool results replaced by a one-line ledger entry. */
+  condensedResults: number;
   /** Whole exchanges removed as a last resort. */
   droppedExchanges: number;
   /** true if the budget was never reached. */

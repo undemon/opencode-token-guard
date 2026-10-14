@@ -97,6 +97,7 @@ function readLimits(raw: unknown): CondenseLimits {
     toolResultTokens: num(o.toolResultTokens, DEFAULT_LIMITS.toolResultTokens),
     toolErrorTokens: num(o.toolErrorTokens, DEFAULT_LIMITS.toolErrorTokens),
     miscTokens: num(o.miscTokens, DEFAULT_LIMITS.miscTokens),
+    ledgerKeep: Math.max(0, Math.floor(num(o.ledgerKeep, DEFAULT_LIMITS.ledgerKeep))),
   };
 }
 
